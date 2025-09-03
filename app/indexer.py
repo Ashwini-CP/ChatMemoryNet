@@ -7,7 +7,7 @@ from typing import Dict, Any, Tuple
 from .nlp import embed_texts
 
 # Paths
-DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "health_tanglish.csv")
+DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "health_tanglish_elaborated.csv")
 INDEX_PATH = os.path.join(os.path.dirname(__file__), "..", "storage", "symptom_index.json")
 
 def build_index() -> Dict[str, Any]:
