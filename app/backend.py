@@ -40,13 +40,19 @@ qa = ConversationalRetrievalChain.from_llm(
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.get_json()
-    query = data.get("message", "")
+    query = data.get("message", "").strip()
     
     if not query:
         return jsonify({"reply": "Please enter a symptom or question."})
     
-    result = qa.invoke({"question": query})
-    return jsonify({"reply": result["answer"]})
+    try:
+        # Use the new invoke API
+        result = qa.invoke({"question": query})
+        return jsonify({"reply": result["answer"]})
+    except Exception as e:
+        # Catch backend errors and send to frontend
+        return jsonify({"reply": f"⚠️ Backend error: {str(e)}"})
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
