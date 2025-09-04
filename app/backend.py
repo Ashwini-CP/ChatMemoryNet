@@ -25,11 +25,12 @@ memory = ConversationBufferMemory(memory_key="chat_history", return_messages=Tru
 
 # ===== 3. Define LLM (HuggingFace Endpoint) =====
 llm = HuggingFaceEndpoint(
-    repo_id="google/flan-t5-large",
+    repo_id="google/flan-t5-xl",   # or another hosted model
     task="text2text-generation",
     temperature=0.2,
     max_new_tokens=256
 )
+
 
 # ===== 4. Conversational Retrieval Chain =====
 qa = ConversationalRetrievalChain.from_llm(
