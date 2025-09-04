@@ -1,35 +1,47 @@
-
-from __future__ import annotations
 from flask import Flask, request, jsonify
-from .indexer import build_index
-from .orchestrator import respond
-from .graph_memory import get_graph
-from networkx.readwrite import json_graph
+from langchain.chains import ConversationalRetrievalChain
+from langchain.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.llms import HuggingFaceHub  # or OpenAI
+from langchain.memory import ConversationBufferMemory
+import pandas as pd
 
 app = Flask(__name__)
 
-@app.route('/health', methods=['GET'])
-def health():
-    return {'status': 'ok'}
+# ===== 1. Load dataset and create embeddings =====
+df = pd.read_csv("data/health_tanglish.csv")
+symptoms = df["symptoms"].astype(str).tolist()
+solutions = df["solution"].astype(str).tolist()
 
-@app.route('/rebuild', methods=['POST'])
-def rebuild():
-    data = build_index()
-    return {'ok': True, 'count': len(data['symptoms'])}
+# Create text pairs (symptom + solution)
+docs = [f"Symptom: {s}\nSolution: {sol}" for s, sol in zip(symptoms, solutions)]
 
-@app.route('/chat', methods=['POST'])
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+vectorstore = FAISS.from_texts(docs, embeddings)
+
+# ===== 2. Setup Memory =====
+memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+
+# ===== 3. Define LLM (you can also use OpenAI API here) =====
+llm = HuggingFaceHub(repo_id="google/flan-t5-large", model_kwargs={"temperature":0.2, "max_length":256})
+
+# ===== 4. Conversational Retrieval Chain =====
+qa = ConversationalRetrievalChain.from_llm(
+    llm=llm,
+    retriever=vectorstore.as_retriever(),
+    memory=memory
+)
+
+@app.route("/chat", methods=["POST"])
 def chat():
-    data = request.get_json(force=True)
-    user_id = data.get('user_id', 'demo')
-    message = data.get('message', '')
-    result = respond(user_id, message)
-    return jsonify(result)
+    data = request.get_json()
+    query = data.get("message", "")
+    
+    if not query:
+        return jsonify({"reply": "Please enter a symptom or question."})
+    
+    result = qa.run(query)
+    return jsonify({"reply": result})
 
-@app.route('/graph', methods=['GET'])
-def graph():
-    G = get_graph()
-    data = json_graph.node_link_data(G)
-    return jsonify(data)
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000, debug=True)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8000)
