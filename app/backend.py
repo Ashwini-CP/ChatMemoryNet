@@ -31,12 +31,16 @@ if os.path.exists("faiss_index"):
     print("📂 Loading FAISS index from disk...")
     vectorstore = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
 else:
-    print("⚠️ No FAISS index found, creating one with basic health knowledge...")
+    print("⚠️ No FAISS index found, creating one with health knowledge (English + Tanglish)...")
     texts = [
+        # English examples
         "fever and headache: Take rest, drink fluids, and monitor your temperature. Consult a doctor if it persists.",
         "cold and cough: Drink warm water, rest, and take over-the-counter medicine if needed.",
         "stomach pain: Avoid heavy meals, drink warm water, and consult a doctor if severe.",
-        "general: I am a health assistant. I can give basic advice on common symptoms and wellness tips."
+        # Tanglish examples
+        "ennaikku fever um headache um irukku: Rest pannunga, thanni kudunga, fever continue aana doctor kitta pogunga.",
+        "kodu cough um cold um irukku: Warm water kudunga, rest pannunga, medicine venumna OTC edunga.",
+        "general: I am a health assistant. I can give basic advice on common symptoms and wellness tips. Ungaluku help panna ready irukken."
     ]
     vectorstore = FAISS.from_texts(texts, embeddings)
     vectorstore.save_local("faiss_index")
@@ -53,7 +57,10 @@ custom_prompt = PromptTemplate(
     input_variables=["context", "question"],
     template="""
 You are a helpful health assistant.
-Answer the user’s question in simple, clear language. Use Tanglish or English based on the user's message.
+- Answer the user's question in the **same language and style** as they typed (English or Tanglish).
+- Provide clear, simple health advice.
+- Use the context if relevant.
+- If you cannot find an answer in the context, still give a helpful response based on your knowledge.
 
 Context:
 {context}
@@ -82,7 +89,7 @@ def chat():
         return jsonify({"error": "No message provided"}), 400
 
     try:
-        # Use invoke() instead of __call__ to avoid deprecated warnings
+        # Use invoke() instead of deprecated call/run
         result = qa.invoke({"question": user_message})
         response_text = result.get("answer", "").strip()
 
