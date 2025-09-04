@@ -12,13 +12,13 @@ app = Flask(__name__)
 # -----------------------------
 # Load conversational model
 # -----------------------------
-print("⏳ Loading local model (flan-t5-base)...")
+print("⏳ Loading FLAN-T5 conversational model...")
 local_pipeline = pipeline(
     "text2text-generation",
     model="google/flan-t5-base",
     max_length=128,
     truncation=True,
-    device=-1  # CPU, use 0 for GPU
+    device=-1  # CPU, change to 0 for GPU
 )
 llm = HuggingFacePipeline(pipeline=local_pipeline)
 
@@ -35,7 +35,8 @@ else:
     texts = [
         "fever and headache: Take rest, drink fluids, and monitor your temperature. Consult a doctor if it persists.",
         "cold and cough: Drink warm water, rest, and take over-the-counter medicine if needed.",
-        "stomach pain: Avoid heavy meals, drink warm water, and consult a doctor if severe."
+        "stomach pain: Avoid heavy meals, drink warm water, and consult a doctor if severe.",
+        "general: I am a health assistant. I can give basic advice on common symptoms and wellness tips."
     ]
     vectorstore = FAISS.from_texts(texts, embeddings)
     vectorstore.save_local("faiss_index")
@@ -46,18 +47,13 @@ else:
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 # -----------------------------
-# Custom Prompt
+# Prompt Template
 # -----------------------------
 custom_prompt = PromptTemplate(
     input_variables=["context", "question"],
     template="""
 You are a helpful health assistant.
-Answer the user’s question in simple, clear language.
-
-Rules:
-- Use the context if relevant.
-- If no context is relevant, still try to give a helpful answer.
-- If the user only greets or introduces themselves, reply kindly.
+Answer the user’s question in simple, clear language. Use Tanglish or English based on the user's message.
 
 Context:
 {context}
@@ -67,7 +63,7 @@ Bot:"""
 )
 
 # -----------------------------
-# Retrieval + Conversational Chain
+# Conversational Retrieval Chain
 # -----------------------------
 qa = ConversationalRetrievalChain.from_llm(
     llm=llm,
@@ -77,7 +73,7 @@ qa = ConversationalRetrievalChain.from_llm(
 )
 
 # -----------------------------
-# API Routes
+# API Route
 # -----------------------------
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -86,8 +82,15 @@ def chat():
         return jsonify({"error": "No message provided"}), 400
 
     try:
-        response = qa.run(user_message)
-        return jsonify({"reply": response})
+        # Run the QA chain
+        result = qa({"question": user_message}, return_only_outputs=False)
+        response_text = result.get("output_text", "").strip()
+
+        # Fallback if QA fails or output is empty
+        if not response_text:
+            response_text = llm.run(user_message)
+
+        return jsonify({"reply": response_text})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
