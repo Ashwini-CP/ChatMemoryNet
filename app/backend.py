@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 from transformers import pipeline
 from langchain_community.vectorstores import FAISS
-from langchain.memory import ConversationBufferMemory
+from langchain.memory import ConversationBufferWindowMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
 from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
@@ -13,7 +13,7 @@ app = Flask(__name__)
 # Load conversational model
 # -----------------------------
 print("⏳ Loading FLAN-T5 conversational model...")
-# Optional: switch to "google/flan-t5-large" for more human-like responses if you have RAM/GPU
+# Optional: switch to "google/flan-t5-large" for better multi-turn coherence
 model_name = "google/flan-t5-base"
 
 local_pipeline = pipeline(
@@ -37,9 +37,9 @@ else:
     print("⚠️ No FAISS index found, creating one with richer health knowledge...")
     texts = [
         # English examples
-        "fever and headache: Take rest, drink fluids, and monitor your temperature. If high fever persists, consult a doctor.",
-        "fever and cough: Rest well, drink plenty of fluids, use a humidifier. If fever lasts more than 3 days, see a doctor.",
-        "cold: Rest, stay hydrated, and take OTC medicine if needed.",
+        "fever and headache: Take rest, drink fluids, monitor temperature. Consult a doctor if high fever persists.",
+        "fever and cough: Rest, drink fluids, use a humidifier. See a doctor if fever lasts >3 days.",
+        "cold: Rest, stay hydrated, take OTC medicine if needed.",
         "stomach pain: Avoid heavy meals, drink warm water, consult a doctor if severe.",
         "general: I am a health assistant. I provide basic advice on symptoms and wellness tips.",
         # Tanglish examples
@@ -53,9 +53,13 @@ else:
     vectorstore.save_local("faiss_index")
 
 # -----------------------------
-# Memory
+# Limited Conversation Memory
 # -----------------------------
-memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+memory = ConversationBufferWindowMemory(
+    memory_key="chat_history",
+    k=5,  # keep last 5 messages for context
+    return_messages=True
+)
 
 # -----------------------------
 # Prompt Template
@@ -64,11 +68,11 @@ custom_prompt = PromptTemplate(
     input_variables=["context", "question"],
     template="""
 You are a helpful and empathetic health assistant.
-- Respond in the same language and style as the user (Tanglish or English).
+- Respond in the same language/style as the user (Tanglish or English).
 - Give clear, concise, actionable advice.
-- Use context if relevant.
-- Avoid repeating sentences; respond like a human.
-- If the context has no answer, still provide helpful advice for common symptoms.
+- Use context only if relevant, do not repeat old messages.
+- Focus on the latest question from the user.
+- Avoid repeating sentences.
 
 Context:
 {context}
