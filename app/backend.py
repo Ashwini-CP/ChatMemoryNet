@@ -82,13 +82,14 @@ def chat():
         return jsonify({"error": "No message provided"}), 400
 
     try:
-        # Run the QA chain
-        result = qa({"question": user_message}, return_only_outputs=False)
-        response_text = result.get("output_text", "").strip()
+        # Use invoke() instead of __call__ to avoid deprecated warnings
+        result = qa.invoke({"question": user_message})
+        response_text = result.get("answer", "").strip()
 
-        # Fallback if QA fails or output is empty
+        # Fallback if empty
         if not response_text:
-            response_text = llm.run(user_message)
+            llm_result = llm.invoke({"text": user_message})
+            response_text = llm_result.get("text", "").strip()
 
         return jsonify({"reply": response_text})
     except Exception as e:
