@@ -13,9 +13,12 @@ app = Flask(__name__)
 # Load conversational model
 # -----------------------------
 print("⏳ Loading FLAN-T5 conversational model...")
+# Optional: switch to "google/flan-t5-large" for more human-like responses if you have RAM/GPU
+model_name = "google/flan-t5-base"
+
 local_pipeline = pipeline(
     "text2text-generation",
-    model="google/flan-t5-base",
+    model=model_name,
     max_length=128,
     truncation=True,
     device=-1  # CPU, change to 0 for GPU
@@ -31,16 +34,20 @@ if os.path.exists("faiss_index"):
     print("📂 Loading FAISS index from disk...")
     vectorstore = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
 else:
-    print("⚠️ No FAISS index found, creating one with health knowledge (English + Tanglish)...")
+    print("⚠️ No FAISS index found, creating one with richer health knowledge...")
     texts = [
         # English examples
-        "fever and headache: Take rest, drink fluids, and monitor your temperature. Consult a doctor if it persists.",
-        "cold and cough: Drink warm water, rest, and take over-the-counter medicine if needed.",
-        "stomach pain: Avoid heavy meals, drink warm water, and consult a doctor if severe.",
+        "fever and headache: Take rest, drink fluids, and monitor your temperature. If high fever persists, consult a doctor.",
+        "fever and cough: Rest well, drink plenty of fluids, use a humidifier. If fever lasts more than 3 days, see a doctor.",
+        "cold: Rest, stay hydrated, and take OTC medicine if needed.",
+        "stomach pain: Avoid heavy meals, drink warm water, consult a doctor if severe.",
+        "general: I am a health assistant. I provide basic advice on symptoms and wellness tips.",
         # Tanglish examples
-        "ennaikku fever um headache um irukku: Rest pannunga, thanni kudunga, fever continue aana doctor kitta pogunga.",
-        "kodu cough um cold um irukku: Warm water kudunga, rest pannunga, medicine venumna OTC edunga.",
-        "general: I am a health assistant. I can give basic advice on common symptoms and wellness tips. Ungaluku help panna ready irukken."
+        "ennaikku fever um headache um irukku: Rest pannunga, thanni kudunga. Fever adhigam irundha doctor kitta poonga.",
+        "ennaikku fever um cough um irukku: Rest pannunga, thanni kudunga, humidifier use pannunga. Fever 3 naal mela irundha doctor kitta poonga.",
+        "kodu cold irukku: Rest pannunga, thanni kudunga, OTC medicine edunga if necessary.",
+        "stomach pain: Heavy meals avoid pannunga, warm water kudunga, severe aana doctor kitta poonga.",
+        "general: Naan unga health assistant. Ungaluku basic symptoms advice and wellness tips kuduren."
     ]
     vectorstore = FAISS.from_texts(texts, embeddings)
     vectorstore.save_local("faiss_index")
@@ -56,11 +63,12 @@ memory = ConversationBufferMemory(memory_key="chat_history", return_messages=Tru
 custom_prompt = PromptTemplate(
     input_variables=["context", "question"],
     template="""
-You are a helpful health assistant.
-- Answer the user's question in the **same language and style** as they typed (English or Tanglish).
-- Provide clear, simple health advice.
-- Use the context if relevant.
-- If you cannot find an answer in the context, still give a helpful response based on your knowledge.
+You are a helpful and empathetic health assistant.
+- Respond in the same language and style as the user (Tanglish or English).
+- Give clear, concise, actionable advice.
+- Use context if relevant.
+- Avoid repeating sentences; respond like a human.
+- If the context has no answer, still provide helpful advice for common symptoms.
 
 Context:
 {context}
@@ -89,11 +97,11 @@ def chat():
         return jsonify({"error": "No message provided"}), 400
 
     try:
-        # Use invoke() instead of deprecated call/run
+        # Use invoke() for LangChain v0.1+
         result = qa.invoke({"question": user_message})
         response_text = result.get("answer", "").strip()
 
-        # Fallback if empty
+        # Fallback to raw LLM if empty
         if not response_text:
             llm_result = llm.invoke({"text": user_message})
             response_text = llm_result.get("text", "").strip()
