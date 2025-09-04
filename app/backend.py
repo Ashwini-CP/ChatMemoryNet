@@ -15,14 +15,14 @@ app = Flask(__name__)
 CORS(app)
 
 # -------------------------------
-# Load HuggingFace model locally
+# Load Lightweight Local Model
 # -------------------------------
-print("⏳ Loading local model (google/flan-t5-large)...")
+print("⏳ Loading local model (distilbart-cnn-12-6)...")
 local_pipeline = pipeline(
     "text2text-generation",
-    model="google/flan-t5-large",  # change to flan-t5-xl if you have more RAM
-    tokenizer="google/flan-t5-large",
-    max_length=512,
+    model="sshleifer/distilbart-cnn-12-6",
+    tokenizer="sshleifer/distilbart-cnn-12-6",
+    max_length=256,       # smaller output
     temperature=0.7
 )
 llm = HuggingFacePipeline(pipeline=local_pipeline)
@@ -37,7 +37,6 @@ if os.path.exists("faiss_index"):
     db = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
 else:
     print("⚠️ No FAISS index found, creating empty one...")
-    from langchain_community.vectorstores import FAISS
     db = FAISS.from_texts(["Hello! I am your health assistant."], embeddings)
     db.save_local("faiss_index")
 
