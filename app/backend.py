@@ -23,7 +23,12 @@ vectorstore = FAISS.from_texts(docs, embeddings)
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 # ===== 3. Define LLM (you can also use OpenAI API here) =====
-llm = HuggingFaceHub(repo_id="google/flan-t5-large", model_kwargs={"temperature":0.2, "max_length":256})
+llm = HuggingFaceHub(
+    repo_id="google/flan-t5-large",
+    task="text2text-generation",   # ✅ specify task
+    model_kwargs={"temperature":0.2, "max_length":256}
+)
+
 
 # ===== 4. Conversational Retrieval Chain =====
 qa = ConversationalRetrievalChain.from_llm(
