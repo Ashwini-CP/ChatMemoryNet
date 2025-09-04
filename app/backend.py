@@ -10,11 +10,10 @@ import os
 app = Flask(__name__)
 
 # -----------------------------
-# Load conversational model
+# Load FLAN-T5 model
 # -----------------------------
 print("⏳ Loading FLAN-T5 conversational model...")
-# Optional: switch to "google/flan-t5-large" for more coherent responses
-model_name = "google/flan-t5-base"
+model_name = "google/flan-t5-base"  # Change to "flan-t5-large" if you have GPU/RAM
 
 local_pipeline = pipeline(
     "text2text-generation",
@@ -34,14 +33,14 @@ if os.path.exists("faiss_index"):
     print("📂 Loading FAISS index from disk...")
     vectorstore = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
 else:
-    print("⚠️ No FAISS index found, creating FAISS index with health knowledge...")
+    print("⚠️ No FAISS index found, creating FAISS index...")
     texts = [
-        # English symptom-advice pairs
-        "fever: Rest, drink fluids, monitor temperature. Use paracetamol if necessary. See a doctor if fever lasts more than 3 days.",
+        # English symptom-advice
+        "fever: Rest, drink fluids, monitor temperature. Take paracetamol if necessary. See a doctor if fever persists more than 3 days.",
         "headache: Rest, stay hydrated, avoid bright lights. Take OTC painkillers if needed.",
-        "cold and cough: Drink warm water, rest, use a humidifier. See a doctor if symptoms worsen.",
+        "cold and cough: Drink warm water, rest, use a humidifier. Consult a doctor if symptoms worsen.",
         "stomach pain: Eat light meals, drink warm water, consult a doctor if severe.",
-        # Tanglish symptom-advice pairs
+        # Tanglish symptom-advice
         "ennaikku fever irukku: Rest pannunga, thanni kudunga, paracetamol kudikalam. Fever 3 naal mela irundha doctor kitta poonga.",
         "ennaikku headache irukku: Rest pannunga, thanni kudunga, bright light avoid pannunga. OTC painkiller edunga.",
         "kodu cold um cough um irukku: Warm water kudunga, rest pannunga, humidifier use pannunga. Symptoms adhigam irundha doctor kitta poonga.",
@@ -51,29 +50,29 @@ else:
     vectorstore.save_local("faiss_index")
 
 # -----------------------------
-# Limited Conversation Memory
+# Conversation memory (last 5 messages)
 # -----------------------------
 memory = ConversationBufferWindowMemory(
     memory_key="chat_history",
-    k=5,  # keep only last 5 messages for coherent conversation
+    k=5,
     return_messages=True
 )
 
 # -----------------------------
-# Strict Prompt: Always Answer
+# Prompt: Always give actionable advice
 # -----------------------------
 custom_prompt = PromptTemplate(
     input_variables=["context", "question"],
     template="""
-You are a helpful and empathetic health assistant.
+You are a helpful health assistant.
 - Respond in the same language/style as the user (Tanglish or English).
 - Give clear, concise, actionable health advice.
-- IGNORE unknown words; do not try to define or interpret them literally.
-- NEVER ask the user questions back.
-- Use context only if relevant; do not repeat old messages.
+- Ignore unknown words; do not try to interpret them literally.
+- Never ask questions back.
+- Use context only if relevant.
 - Focus on the latest user message.
 - Avoid repeating sentences.
-- If unsure, give general helpful advice for common symptoms.
+- If unsure, give general advice for common symptoms.
 
 Context:
 {context}
@@ -102,11 +101,12 @@ def chat():
         return jsonify({"error": "No message provided"}), 400
 
     try:
-        # Use invoke() for LangChain v0.1+
+        # Ensure proper retrieval + response
         result = qa.invoke({"question": user_message})
-        response_text = result.get("answer", "").strip()
+        response_text = result.get("answer") or result.get("result") or ""
+        response_text = response_text.strip()
 
-        # Fallback to raw LLM if empty
+        # Fallback if response is empty
         if not response_text:
             llm_result = llm.invoke({"text": user_message})
             response_text = llm_result.get("text", "").strip()
