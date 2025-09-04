@@ -13,7 +13,7 @@ app = Flask(__name__)
 # Load conversational model
 # -----------------------------
 print("⏳ Loading FLAN-T5 conversational model...")
-# Optional: switch to "google/flan-t5-large" for better multi-turn coherence
+# Optional: switch to "google/flan-t5-large" for more coherent responses
 model_name = "google/flan-t5-base"
 
 local_pipeline = pipeline(
@@ -34,18 +34,18 @@ if os.path.exists("faiss_index"):
     print("📂 Loading FAISS index from disk...")
     vectorstore = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
 else:
-    print("⚠️ No FAISS index found, creating one with richer health knowledge...")
+    print("⚠️ No FAISS index found, creating FAISS index with richer health knowledge...")
     texts = [
         # English examples
-        "fever and headache: Take rest, drink fluids, monitor temperature. Consult a doctor if high fever persists.",
-        "fever and cough: Rest, drink fluids, use a humidifier. See a doctor if fever lasts >3 days.",
-        "cold: Rest, stay hydrated, take OTC medicine if needed.",
-        "stomach pain: Avoid heavy meals, drink warm water, consult a doctor if severe.",
+        "fever: Take rest, drink plenty of fluids, monitor temperature. Use paracetamol if necessary. Consult a doctor if fever persists more than 3 days.",
+        "headache: Rest, stay hydrated, avoid bright lights. Take OTC painkillers if needed.",
+        "cold and cough: Drink warm water, rest, use a humidifier. Consult a doctor if symptoms worsen.",
+        "stomach pain: Eat light meals, drink warm water, and see a doctor if severe.",
         "general: I am a health assistant. I provide basic advice on symptoms and wellness tips.",
         # Tanglish examples
-        "ennaikku fever um headache um irukku: Rest pannunga, thanni kudunga. Fever adhigam irundha doctor kitta poonga.",
-        "ennaikku fever um cough um irukku: Rest pannunga, thanni kudunga, humidifier use pannunga. Fever 3 naal mela irundha doctor kitta poonga.",
-        "kodu cold irukku: Rest pannunga, thanni kudunga, OTC medicine edunga if necessary.",
+        "ennaikku fever irukku: Rest pannunga, thanni kudunga, paracetamol kudikalam. Fever 3 naal mela irundha doctor kitta poonga.",
+        "headache: Rest pannunga, thanni kudunga, bright light avoid pannunga. OTC painkiller edunga.",
+        "cold um cough um irukku: Warm water kudunga, rest pannunga, humidifier use pannunga. Symptoms adhigam irundha doctor kitta poonga.",
         "stomach pain: Heavy meals avoid pannunga, warm water kudunga, severe aana doctor kitta poonga.",
         "general: Naan unga health assistant. Ungaluku basic symptoms advice and wellness tips kuduren."
     ]
@@ -57,7 +57,7 @@ else:
 # -----------------------------
 memory = ConversationBufferWindowMemory(
     memory_key="chat_history",
-    k=5,  # keep last 5 messages for context
+    k=5,  # keep only last 5 messages to maintain context
     return_messages=True
 )
 
@@ -70,9 +70,11 @@ custom_prompt = PromptTemplate(
 You are a helpful and empathetic health assistant.
 - Respond in the same language/style as the user (Tanglish or English).
 - Give clear, concise, actionable advice.
+- NEVER ask questions back to the user.
 - Use context only if relevant, do not repeat old messages.
-- Focus on the latest question from the user.
+- Focus on the latest user message.
 - Avoid repeating sentences.
+- If unsure, give general helpful advice rather than asking questions.
 
 Context:
 {context}
