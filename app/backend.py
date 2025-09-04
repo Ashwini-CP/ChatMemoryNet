@@ -1,11 +1,9 @@
 from flask import Flask, request, jsonify
 from langchain.chains import ConversationalRetrievalChain
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings, HuggingFaceEndpoint
 from langchain.memory import ConversationBufferMemory
-from langchain_huggingface import HuggingFaceEndpoint  # ✅ NEW
 import pandas as pd
-import os
 
 app = Flask(__name__)
 
@@ -17,18 +15,19 @@ solutions = df["solution"].astype(str).tolist()
 # Create text pairs (symptom + solution)
 docs = [f"Symptom: {s}\nSolution: {sol}" for s, sol in zip(symptoms, solutions)]
 
+# Embeddings
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 vectorstore = FAISS.from_texts(docs, embeddings)
 
 # ===== 2. Setup Memory =====
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
-# ===== 3. Define LLM (Hugging Face Endpoint) =====
+# ===== 3. Define LLM (HuggingFace Endpoint) =====
 llm = HuggingFaceEndpoint(
     repo_id="google/flan-t5-large",
-    task="text2text-generation",   # ✅ required
-    huggingfacehub_api_token=os.getenv("HUGGINGFACEHUB_API_TOKEN"),
-    model_kwargs={"temperature": 0.2, "max_length": 256}
+    task="text2text-generation",   # required!
+    temperature=0.2,
+    max_length=256
 )
 
 # ===== 4. Conversational Retrieval Chain =====
@@ -46,7 +45,6 @@ def chat():
     if not query:
         return jsonify({"reply": "Please enter a symptom or question."})
     
-    # ✅ New way: use invoke() instead of deprecated run()
     result = qa.invoke({"question": query})
     return jsonify({"reply": result["answer"]})
 
