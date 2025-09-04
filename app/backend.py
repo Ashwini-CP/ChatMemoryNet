@@ -2,9 +2,10 @@ from flask import Flask, request, jsonify
 from langchain.chains import ConversationalRetrievalChain
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.llms import HuggingFaceHub  # or OpenAI
 from langchain.memory import ConversationBufferMemory
+from langchain_huggingface import HuggingFaceEndpoint  # ✅ NEW
 import pandas as pd
+import os
 
 app = Flask(__name__)
 
@@ -22,13 +23,13 @@ vectorstore = FAISS.from_texts(docs, embeddings)
 # ===== 2. Setup Memory =====
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
-# ===== 3. Define LLM (you can also use OpenAI API here) =====
-llm = HuggingFaceHub(
+# ===== 3. Define LLM (Hugging Face Endpoint) =====
+llm = HuggingFaceEndpoint(
     repo_id="google/flan-t5-large",
-    task="text2text-generation",   # ✅ specify task
-    model_kwargs={"temperature":0.2, "max_length":256}
+    task="text2text-generation",   # ✅ required
+    huggingfacehub_api_token=os.getenv("HUGGINGFACEHUB_API_TOKEN"),
+    model_kwargs={"temperature": 0.2, "max_length": 256}
 )
-
 
 # ===== 4. Conversational Retrieval Chain =====
 qa = ConversationalRetrievalChain.from_llm(
@@ -45,8 +46,9 @@ def chat():
     if not query:
         return jsonify({"reply": "Please enter a symptom or question."})
     
-    result = qa.run(query)
-    return jsonify({"reply": result})
+    # ✅ New way: use invoke() instead of deprecated run()
+    result = qa.invoke({"question": query})
+    return jsonify({"reply": result["answer"]})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
