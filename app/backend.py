@@ -3,6 +3,7 @@ from transformers import pipeline
 from langchain_community.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
+from langchain.prompts import PromptTemplate
 
 # Use new recommended imports
 from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
@@ -19,7 +20,7 @@ print("⏳ Loading local model (distilbart-cnn-12-6)...")
 local_pipeline = pipeline(
     "text2text-generation",
     model="sshleifer/distilbart-cnn-12-6",
-    device=-1   # CPU, use 0 for GPU
+    device=-1   # CPU (-1), use 0 for GPU
 )
 
 llm = HuggingFacePipeline(pipeline=local_pipeline)
@@ -43,12 +44,32 @@ else:
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 # -----------------------------
-# Retrieval Chain
+# Custom QA Prompt
+# -----------------------------
+custom_prompt = PromptTemplate(
+    input_variables=["context", "question"],
+    template="""
+You are a helpful Health Assistant bot.
+Use the provided context to answer the user's question in simple, clear language.
+If the answer is not in the context, reply: "I don’t know. Please consult a doctor."
+
+Context:
+{context}
+
+Question:
+{question}
+
+Answer:"""
+)
+
+# -----------------------------
+# Retrieval Chain with custom prompt
 # -----------------------------
 qa = ConversationalRetrievalChain.from_llm(
     llm=llm,
     retriever=vectorstore.as_retriever(),
     memory=memory,
+    combine_docs_chain_kwargs={"prompt": custom_prompt}
 )
 
 # -----------------------------
