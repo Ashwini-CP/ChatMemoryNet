@@ -5,7 +5,7 @@ from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
 
-# Use new recommended imports
+# ✅ Updated imports
 from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
 
 import os
@@ -13,14 +13,16 @@ import os
 app = Flask(__name__)
 
 # -----------------------------
-# Load local model
+# Load conversational model
 # -----------------------------
-print("⏳ Loading local model (distilbart-cnn-12-6)...")
+print("⏳ Loading local model (flan-t5-base)...")
 
 local_pipeline = pipeline(
     "text2text-generation",
-    model="sshleifer/distilbart-cnn-12-6",
-    device=-1   # CPU (-1), use 0 for GPU
+    model="google/flan-t5-base",   # ✅ conversational model
+    max_length=128,
+    truncation=True,
+    device=-1                      # CPU, use 0 for GPU
 )
 
 llm = HuggingFacePipeline(pipeline=local_pipeline)
@@ -44,26 +46,28 @@ else:
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 # -----------------------------
-# Custom QA Prompt
+# Custom Prompt (prevents repetition)
 # -----------------------------
 custom_prompt = PromptTemplate(
     input_variables=["context", "question"],
     template="""
-You are a helpful Health Assistant bot.
-Use the provided context to answer the user's question in simple, clear language.
-If the answer is not in the context, reply: "I don’t know. Please consult a doctor."
+You are a helpful health assistant.
+Answer the user’s question in simple, clear language.
+
+Rules:
+- Only use the context if it's relevant.
+- If no answer is found in the context, reply exactly: "I don’t know. Please consult a doctor."
+- If the user only greets or introduces themselves, reply kindly as a health assistant.
 
 Context:
 {context}
 
-Question:
-{question}
-
-Answer:"""
+User: {question}
+Bot:"""
 )
 
 # -----------------------------
-# Retrieval Chain with custom prompt
+# Retrieval Chain
 # -----------------------------
 qa = ConversationalRetrievalChain.from_llm(
     llm=llm,
