@@ -26,9 +26,9 @@ memory = ConversationBufferMemory(memory_key="chat_history", return_messages=Tru
 # ===== 3. Define LLM (HuggingFace Endpoint) =====
 llm = HuggingFaceEndpoint(
     repo_id="google/flan-t5-large",
-    task="text2text-generation",   # required
+    task="text2text-generation",
     temperature=0.2,
-    max_new_tokens=256             # ✅ use max_new_tokens (not max_length)
+    max_new_tokens=256
 )
 
 # ===== 4. Conversational Retrieval Chain =====
@@ -47,14 +47,17 @@ def chat():
         return jsonify({"reply": "Please enter a symptom or question."})
 
     try:
-        # Use invoke API (new standard)
+        # Call QA chain
         result = qa.invoke({"question": query})
-        return jsonify({"reply": result["answer"]})
+        return jsonify({"reply": result.get("answer", "No answer generated.")})
     except Exception as e:
-        # Print full traceback in terminal for debugging
+        # Print detailed traceback in backend logs
         error_msg = f"{str(e)}\n{traceback.format_exc()}"
-        print("❌ Backend error:", error_msg)
-        return jsonify({"reply": f"⚠️ Backend error: {str(e)}"})
+        print("❌ Backend error:\n", error_msg)
+
+        # Ensure frontend always sees *something*
+        clean_msg = str(e) if str(e).strip() else "Unknown error (check backend logs)."
+        return jsonify({"reply": f"⚠️ Backend error: {clean_msg}"})
 
 
 if __name__ == "__main__":
