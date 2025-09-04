@@ -25,9 +25,9 @@ memory = ConversationBufferMemory(memory_key="chat_history", return_messages=Tru
 # ===== 3. Define LLM (HuggingFace Endpoint) =====
 llm = HuggingFaceEndpoint(
     repo_id="google/flan-t5-large",
-    task="text2text-generation",   # required!
+    task="text2text-generation",   # ✅ required
     temperature=0.2,
-    max_length=256
+    max_new_tokens=256             # ✅ correct arg (instead of max_length)
 )
 
 # ===== 4. Conversational Retrieval Chain =====
@@ -46,11 +46,10 @@ def chat():
         return jsonify({"reply": "Please enter a symptom or question."})
     
     try:
-        # Use the new invoke API
+        # ✅ Use invoke API (run is deprecated)
         result = qa.invoke({"question": query})
         return jsonify({"reply": result["answer"]})
     except Exception as e:
-        # Catch backend errors and send to frontend
         return jsonify({"reply": f"⚠️ Backend error: {str(e)}"})
 
 
