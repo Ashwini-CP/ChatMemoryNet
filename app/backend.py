@@ -1,15 +1,15 @@
 from flask import Flask, request, jsonify
 from langchain.chains import ConversationalRetrievalChain
-from langchain.vectorstores import FAISS
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.llms import HuggingFaceHub  # or OpenAI
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.llms import HuggingFaceHub  # or OpenAI
 from langchain.memory import ConversationBufferMemory
 import pandas as pd
 
 app = Flask(__name__)
 
 # ===== 1. Load dataset and create embeddings =====
-df = pd.read_csv("data/health_tanglish.csv")
+df = pd.read_csv("data/health_tanglish_elaborated.csv")
 symptoms = df["symptoms"].astype(str).tolist()
 solutions = df["solution"].astype(str).tolist()
 
