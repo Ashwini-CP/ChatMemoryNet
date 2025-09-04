@@ -4,6 +4,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings, HuggingFaceEndpoint
 from langchain.memory import ConversationBufferMemory
 import pandas as pd
+import traceback
 
 app = Flask(__name__)
 
@@ -25,9 +26,9 @@ memory = ConversationBufferMemory(memory_key="chat_history", return_messages=Tru
 # ===== 3. Define LLM (HuggingFace Endpoint) =====
 llm = HuggingFaceEndpoint(
     repo_id="google/flan-t5-large",
-    task="text2text-generation",   # ✅ required
+    task="text2text-generation",   # required
     temperature=0.2,
-    max_new_tokens=256             # ✅ correct arg (instead of max_length)
+    max_new_tokens=256             # ✅ use max_new_tokens (not max_length)
 )
 
 # ===== 4. Conversational Retrieval Chain =====
@@ -41,15 +42,18 @@ qa = ConversationalRetrievalChain.from_llm(
 def chat():
     data = request.get_json()
     query = data.get("message", "").strip()
-    
+
     if not query:
         return jsonify({"reply": "Please enter a symptom or question."})
-    
+
     try:
-        # ✅ Use invoke API (run is deprecated)
+        # Use invoke API (new standard)
         result = qa.invoke({"question": query})
         return jsonify({"reply": result["answer"]})
     except Exception as e:
+        # Print full traceback in terminal for debugging
+        error_msg = f"{str(e)}\n{traceback.format_exc()}"
+        print("❌ Backend error:", error_msg)
         return jsonify({"reply": f"⚠️ Backend error: {str(e)}"})
 
 
