@@ -2,27 +2,23 @@ from flask import Flask, request, jsonify
 from transformers import pipeline
 from langchain_community.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
-from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
-
-# New recommended imports
+from langchain.chains import ConversationalRetrievalChain
+from langchain.chains.qa_with_sources import load_qa_with_sources_chain
 from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
-
 import os
 
 app = Flask(__name__)
 
 # -----------------------------
-# Load Local LLM
+# Load Local Model
 # -----------------------------
-print("⏳ Loading local model (flan-t5-large)...")
-
+print("⏳ Loading local model (distilbart-cnn-12-6)...")
 local_pipeline = pipeline(
     "text2text-generation",
-    model="google/flan-t5-large",
-    device=-1   # CPU, set to 0 for GPU
+    model="sshleifer/distilbart-cnn-12-6",
+    device=-1  # CPU; use 0 for GPU
 )
-
 llm = HuggingFacePipeline(pipeline=local_pipeline)
 
 # -----------------------------
@@ -34,17 +30,8 @@ if os.path.exists("faiss_index"):
     print("📂 Loading FAISS index from disk...")
     vectorstore = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
 else:
-    print("⚠️ No FAISS index found, creating a new one...")
-
-    health_texts = [
-        "Symptom: fever, headache. Solution: Take rest, drink warm fluids, and use paracetamol.",
-        "Tanglish: enakku fever irukku. Solution: Take rest, drink warm fluids, and use paracetamol.",
-        "Symptom: cough and cold. Solution: Steam inhalation, drink warm water, and rest well.",
-        "Tanglish: enakku thalai vali irukku. Solution: Take rest, drink water, and avoid stress.",
-        "Symptom: stomach pain. Solution: Take light food, drink warm water, and consult a doctor if severe.",
-    ]
-
-    vectorstore = FAISS.from_texts(health_texts, embeddings)
+    print("⚠️ No FAISS index found, creating empty one...")
+    vectorstore = FAISS.from_texts(["Welcome to Health Memory Bot!"], embeddings)
     vectorstore.save_local("faiss_index")
 
 # -----------------------------
@@ -56,36 +43,46 @@ memory = ConversationBufferMemory(memory_key="chat_history", return_messages=Tru
 # Custom Prompt
 # -----------------------------
 custom_prompt = PromptTemplate(
-    input_variables=["context", "question"],
+    input_variables=["context", "question", "chat_history"],
     template="""
-You are a helpful Health Assistant.
+You are a helpful Health Assistant chatbot.
 
-Chat history and context are below:
+- If the user greets (hi, hello, bye, thank you), reply politely in simple English.
+- Use the provided context to answer health-related questions clearly.
+- If the answer is NOT in the context, reply exactly: "I don’t know. Please consult a doctor."
+- If the user says something unrelated to health and no context applies, reply: "I am your health assistant."
+
+Chat History:
+{chat_history}
+
+Context:
 {context}
 
-User question: {question}
+Question:
+{question}
 
-Rules:
-- If the user greets (hi, hello, bye, thank you), respond politely in simple English.
-- If the answer is in the health context, reply clearly with the solution.
-- If the answer is NOT in context, reply exactly: "I don’t know. Please consult a doctor."
-- If no health question is asked, reply: "I am your health assistant."
-""",
+Answer:
+"""
 )
 
 # -----------------------------
-# Retrieval Chain
+# Build Conversational Retrieval Chain
 # -----------------------------
-qa = ConversationalRetrievalChain.from_llm(
+qa_chain = load_qa_with_sources_chain(
     llm=llm,
+    chain_type="stuff",
+    prompt=custom_prompt
+)
+
+qa = ConversationalRetrievalChain(
     retriever=vectorstore.as_retriever(search_kwargs={"k": 3}),
+    combine_docs_chain=qa_chain,
     memory=memory,
-    combine_docs_chain_kwargs={"prompt": custom_prompt},
     return_source_documents=False,
 )
 
 # -----------------------------
-# API Routes
+# API Route
 # -----------------------------
 @app.route("/chat", methods=["POST"])
 def chat():
