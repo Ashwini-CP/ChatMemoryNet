@@ -110,7 +110,12 @@ def chat():
         return jsonify({"reply": greeting_reply})
 
     try:
-        # Retrieve closest symptom/symptom_text
+        # 1️⃣ Direct match first
+        for key, solution in symptom_solution_map.items():
+            if key in user_message:  # partial match check
+                return jsonify({"reply": solution})
+
+        # 2️⃣ FAISS similarity search
         docs = vectorstore.similarity_search(user_message, k=1)
         if docs:
             retrieved_key = docs[0].page_content.lower().strip()
@@ -118,11 +123,12 @@ def chat():
             if solution:
                 return jsonify({"reply": solution})
 
-        # If nothing found
+        # 3️⃣ Nothing matched
         return jsonify({"reply": "I don’t know. Please consult a doctor."})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 # -----------------------------
 # Run Flask
