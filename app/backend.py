@@ -28,13 +28,10 @@ DATA_PATH = "data/health_tanglish_elaborated.csv"
 
 if os.path.exists(DATA_PATH):
     df = pd.read_csv(DATA_PATH)
-
-    # Normalize column names
     df.columns = df.columns.str.strip().str.lower()
     print("📊 CSV Columns:", df.columns.tolist())
 
     if "symptoms" in df.columns and "symptom_text" in df.columns and "solution" in df.columns:
-        # Build a mapping from both symptom & symptom_text → solution
         symptom_solution_map = {}
         knowledge_entries = []
 
@@ -43,18 +40,14 @@ if os.path.exists(DATA_PATH):
             symptom_text = str(row["symptom_text"]).lower().strip()
             solution = str(row["solution"]).strip()
 
-            # Add both forms into the map
             symptom_solution_map[symptom] = solution
             symptom_solution_map[symptom_text] = solution
-
-            # For FAISS embeddings
             knowledge_entries.extend([symptom, symptom_text])
 
         health_knowledge = list(set(knowledge_entries))  # remove duplicates
     else:
         raise ValueError("❌ CSV must contain 'symptoms', 'symptom_text', and 'solution' columns")
 else:
-    # fallback dataset
     symptom_solution_map = {
         "fever": "Take rest, drink warm fluids, and monitor your temperature.",
         "headache": "Drink water, rest in a quiet room, and avoid stress.",
@@ -69,13 +62,17 @@ else:
 # -----------------------------
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
+def build_faiss():
+    global vectorstore
+    vectorstore = FAISS.from_texts(health_knowledge, embeddings)
+    vectorstore.save_local("faiss_index")
+
 if os.path.exists("faiss_index"):
     print("📂 Loading FAISS index from disk...")
     vectorstore = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
 else:
     print("⚠️ No FAISS index found, creating from dataset...")
-    vectorstore = FAISS.from_texts(health_knowledge, embeddings)
-    vectorstore.save_local("faiss_index")
+    build_faiss()
 
 # -----------------------------
 # Memory
@@ -107,12 +104,16 @@ def chat():
     # Greetings
     greeting_reply = handle_greetings(user_message)
     if greeting_reply:
+        memory.chat_memory.add_user_message(user_message)
+        memory.chat_memory.add_ai_message(greeting_reply)
         return jsonify({"reply": greeting_reply})
 
     try:
-        # 1️⃣ Direct match first
+        # 1️⃣ Direct match
         for key, solution in symptom_solution_map.items():
-            if key in user_message:  # partial match check
+            if key in user_message:
+                memory.chat_memory.add_user_message(user_message)
+                memory.chat_memory.add_ai_message(solution)
                 return jsonify({"reply": solution})
 
         # 2️⃣ FAISS similarity search
@@ -121,11 +122,41 @@ def chat():
             retrieved_key = docs[0].page_content.lower().strip()
             solution = symptom_solution_map.get(retrieved_key, None)
             if solution:
+                memory.chat_memory.add_user_message(user_message)
+                memory.chat_memory.add_ai_message(solution)
                 return jsonify({"reply": solution})
 
         # 3️⃣ Nothing matched
-        return jsonify({"reply": "I don’t know. Please consult a doctor."})
+        fallback = "I don’t know. Please consult a doctor."
+        memory.chat_memory.add_user_message(user_message)
+        memory.chat_memory.add_ai_message(fallback)
+        return jsonify({"reply": fallback})
 
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/graph", methods=["GET"])
+def graph():
+    """Return chat history + FAISS index stats as JSON"""
+    try:
+        history = [{"role": m.type, "content": m.content} for m in memory.chat_memory.messages]
+        data = {
+            "chat_history": history,
+            "faiss_index_size": vectorstore.index.ntotal if vectorstore else 0,
+            "knowledge_size": len(health_knowledge)
+        }
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/rebuild", methods=["POST"])
+def rebuild():
+    """Rebuild FAISS index from dataset"""
+    try:
+        build_faiss()
+        return jsonify({"status": "ok", "count": len(health_knowledge)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
