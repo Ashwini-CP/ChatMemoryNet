@@ -4,6 +4,8 @@ from langchain_community.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
+
+# New recommended imports
 from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
 
 import os
@@ -11,15 +13,14 @@ import os
 app = Flask(__name__)
 
 # -----------------------------
-# Load conversational model
+# Load Local LLM
 # -----------------------------
-print("⏳ Loading local conversational model (flan-t5-base)...")
+print("⏳ Loading local model (flan-t5-large)...")
 
 local_pipeline = pipeline(
     "text2text-generation",
-    model="google/flan-t5-base",
-    max_new_tokens=256,
-    device=-1   # CPU (set to 0 if you have GPU)
+    model="google/flan-t5-large",
+    device=-1   # CPU, set to 0 for GPU
 )
 
 llm = HuggingFacePipeline(pipeline=local_pipeline)
@@ -33,15 +34,17 @@ if os.path.exists("faiss_index"):
     print("📂 Loading FAISS index from disk...")
     vectorstore = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
 else:
-    print("⚠️ No FAISS index found. Creating with sample health knowledge...")
-    texts = [
-        "Symptom: fever, headache. Solution: Take rest, drink warm fluids, and use paracetamol if needed.",
-        "Symptom: cold and cough. Solution: Drink warm water, take steam inhalation, and rest well.",
-        "Symptom: stomach pain. Solution: Eat light food, drink water, and avoid spicy food.",
-        "Symptom: stress or anxiety. Solution: Try meditation, deep breathing, and adequate sleep.",
-        "Symptom: body pain. Solution: Take rest, apply warm compress, and stay hydrated."
+    print("⚠️ No FAISS index found, creating a new one...")
+
+    health_texts = [
+        "Symptom: fever, headache. Solution: Take rest, drink warm fluids, and use paracetamol.",
+        "Tanglish: enakku fever irukku. Solution: Take rest, drink warm fluids, and use paracetamol.",
+        "Symptom: cough and cold. Solution: Steam inhalation, drink warm water, and rest well.",
+        "Tanglish: enakku thalai vali irukku. Solution: Take rest, drink water, and avoid stress.",
+        "Symptom: stomach pain. Solution: Take light food, drink warm water, and consult a doctor if severe.",
     ]
-    vectorstore = FAISS.from_texts(texts, embeddings)
+
+    vectorstore = FAISS.from_texts(health_texts, embeddings)
     vectorstore.save_local("faiss_index")
 
 # -----------------------------
@@ -54,15 +57,20 @@ memory = ConversationBufferMemory(memory_key="chat_history", return_messages=Tru
 # -----------------------------
 custom_prompt = PromptTemplate(
     input_variables=["context", "question"],
-    template=(
-        "You are a helpful health assistant.\n\n"
-        "Use the following context to answer the user in simple, clear language.\n"
-        "If the answer is not in the context, reply exactly: I don’t know. Please consult a doctor.\n\n"
-        "Context:\n{context}\n\n"
-        "User: {question}\n\n"
-        "Chat History: You should remember previous chats to make replies consistent.\n\n"
-        "Assistant:"
-    )
+    template="""
+You are a helpful Health Assistant.
+
+Chat history and context are below:
+{context}
+
+User question: {question}
+
+Rules:
+- If the user greets (hi, hello, bye, thank you), respond politely in simple English.
+- If the answer is in the health context, reply clearly with the solution.
+- If the answer is NOT in context, reply exactly: "I don’t know. Please consult a doctor."
+- If no health question is asked, reply: "I am your health assistant."
+""",
 )
 
 # -----------------------------
@@ -73,7 +81,7 @@ qa = ConversationalRetrievalChain.from_llm(
     retriever=vectorstore.as_retriever(search_kwargs={"k": 3}),
     memory=memory,
     combine_docs_chain_kwargs={"prompt": custom_prompt},
-    return_source_documents=False
+    return_source_documents=False,
 )
 
 # -----------------------------
@@ -86,11 +94,10 @@ def chat():
         return jsonify({"error": "No message provided"}), 400
 
     try:
-        result = qa.invoke({"question": user_message})
-        return jsonify({"reply": result["answer"]})
+        response = qa.run(user_message)
+        return jsonify({"reply": response})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 # -----------------------------
 # Run Flask
