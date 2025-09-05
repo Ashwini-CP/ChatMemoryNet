@@ -27,8 +27,14 @@ llm = HuggingFacePipeline(pipeline=local_pipeline)
 # -----------------------------
 DATA_PATH = "data/health_tanglish_elaborated.csv"
 
+
 if os.path.exists(DATA_PATH):
     df = pd.read_csv(DATA_PATH)
+     # Normalize column names
+    df.columns = df.columns.str.strip().str.lower()
+
+    # Debug print
+    print("📊 CSV Columns:", df.columns.tolist())
     health_knowledge = df.apply(lambda row: f"{row['symptom_index']}: {row['solution']}", axis=1).tolist()
 else:
     # fallback dataset if CSV missing
