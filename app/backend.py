@@ -4,8 +4,6 @@ from langchain_community.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
-
-# ✅ Updated imports
 from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
 
 import os
@@ -19,10 +17,9 @@ print("⏳ Loading local model (flan-t5-base)...")
 
 local_pipeline = pipeline(
     "text2text-generation",
-    model="google/flan-t5-base",   # ✅ conversational model
-    max_length=128,
-    truncation=True,
-    device=-1                      # CPU, use 0 for GPU
+    model="google/flan-t5-base",   # conversational model
+    max_new_tokens=128,
+    device=-1   # CPU (set 0 for GPU)
 )
 
 llm = HuggingFacePipeline(pipeline=local_pipeline)
@@ -46,24 +43,21 @@ else:
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 # -----------------------------
-# Custom Prompt (prevents repetition)
+# Custom Prompt (clean, no repetition)
 # -----------------------------
 custom_prompt = PromptTemplate(
     input_variables=["context", "question"],
-    template="""
-You are a helpful health assistant.
-Answer the user’s question in simple, clear language.
-
-Rules:
-- Only use the context if it's relevant.
-- If no answer is found in the context, reply exactly: "I don’t know. Please consult a doctor."
-- If the user only greets or introduces themselves, reply kindly as a health assistant.
-
-Context:
-{context}
-
-User: {question}
-Bot:"""
+    template=(
+        "You are a kind and helpful health assistant.\n\n"
+        "Answer in simple, clear language.\n\n"
+        "Context:\n{context}\n\n"
+        "User: {question}\n\n"
+        "Rules:\n"
+        "- If the answer is found in the context, reply with it clearly.\n"
+        "- If no answer is found in the context, reply exactly: I don’t know. Please consult a doctor.\n"
+        "- If the user just greets or introduces themselves, reply politely as their health assistant.\n\n"
+        "Assistant:"
+    )
 )
 
 # -----------------------------
@@ -73,7 +67,8 @@ qa = ConversationalRetrievalChain.from_llm(
     llm=llm,
     retriever=vectorstore.as_retriever(),
     memory=memory,
-    combine_docs_chain_kwargs={"prompt": custom_prompt}
+    combine_docs_chain_kwargs={"prompt": custom_prompt},
+    return_source_documents=False   # don’t leak docs to user
 )
 
 # -----------------------------
@@ -86,10 +81,11 @@ def chat():
         return jsonify({"error": "No message provided"}), 400
 
     try:
-        response = qa.run(user_message)
-        return jsonify({"reply": response})
+        result = qa.invoke({"question": user_message})
+        return jsonify({"reply": result["answer"]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 # -----------------------------
 # Run Flask
