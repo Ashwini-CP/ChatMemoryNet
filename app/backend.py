@@ -35,7 +35,7 @@ if os.path.exists(DATA_PATH):
 
     # Debug print
     print("📊 CSV Columns:", df.columns.tolist())
-    health_knowledge = df.apply(lambda row: f"{row['symptom_index']}: {row['solution']}", axis=1).tolist()
+    health_knowledge = df.apply(lambda row: f"{row['symptom_text']}: {row['solution']}", axis=1).tolist()
 else:
     # fallback dataset if CSV missing
     health_knowledge = [
