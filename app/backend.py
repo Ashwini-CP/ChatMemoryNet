@@ -4,7 +4,7 @@ from langchain_community.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
-
+import pandas as pd
 import os
 
 app = Flask(__name__)
@@ -17,29 +17,39 @@ print("⏳ Loading local model (distilbart-cnn-12-6)...")
 local_pipeline = pipeline(
     "text2text-generation",
     model="sshleifer/distilbart-cnn-12-6",
-    device=-1   # -1 = CPU, 0 = GPU if available
+    device=-1  # CPU, use 0 for GPU
 )
 
 llm = HuggingFacePipeline(pipeline=local_pipeline)
 
 # -----------------------------
-# Embeddings + FAISS Knowledge Base
+# Load dataset
+# -----------------------------
+DATA_PATH = "data/health_tanglish_elaborated.csv"
+
+if os.path.exists(DATA_PATH):
+    df = pd.read_csv(DATA_PATH)
+    health_knowledge = df.apply(lambda row: f"{row['symptom_index']}: {row['solution']}", axis=1).tolist()
+else:
+    # fallback dataset if CSV missing
+    health_knowledge = [
+        "Fever: Take rest, drink warm fluids, and monitor your temperature.",
+        "Headache: Drink water, rest in a quiet room, and avoid stress.",
+        "Cold: Drink warm fluids, inhale steam, and take rest.",
+        "Cough: Drink warm water, avoid cold drinks, and consider honey with warm water.",
+        "Stomach pain: Take rest, drink warm water, and avoid spicy food."
+    ]
+
+# -----------------------------
+# Embeddings + FAISS
 # -----------------------------
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-
-health_knowledge = [
-    "Fever: Take rest, drink warm fluids, and monitor your temperature.",
-    "Headache: Drink water, rest in a quiet room, and avoid stress.",
-    "Cold: Drink warm fluids, inhale steam, and take rest.",
-    "Cough: Drink warm water, avoid cold drinks, and consider honey with warm water.",
-    "Stomach pain: Take rest, drink warm water, and avoid spicy food."
-]
 
 if os.path.exists("faiss_index"):
     print("📂 Loading FAISS index from disk...")
     vectorstore = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
 else:
-    print("⚠️ No FAISS index found, creating with health knowledge base...")
+    print("⚠️ No FAISS index found, creating from dataset...")
     vectorstore = FAISS.from_texts(health_knowledge, embeddings)
     vectorstore.save_local("faiss_index")
 
@@ -49,52 +59,52 @@ else:
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 # -----------------------------
-# Retrieval Chain
+# Conversational Retrieval Chain
 # -----------------------------
 qa = ConversationalRetrievalChain.from_llm(
     llm=llm,
     retriever=vectorstore.as_retriever(),
     memory=memory,
-    return_source_documents=False
 )
 
 # -----------------------------
-# API Routes
+# Greeting handler
 # -----------------------------
-@app.route("/chat", methods=["POST"])
-def chat():
-    user_message = request.json.get("message", "").lower().strip()
-    if not user_message:
-        return jsonify({"error": "No message provided"}), 400
-
-    # --- Handle greetings manually ---
+def handle_greetings(user_message: str):
     greetings = {
         "hi": "Hello! How can I help you today?",
         "hello": "Hi there! How are you feeling?",
         "bye": "Goodbye! Take care of your health.",
         "thank you": "You're welcome! Stay healthy."
     }
-    for g in greetings:
-        if g in user_message:
-            memory.save_context({"input": user_message}, {"output": greetings[g]})
-            return jsonify({"reply": greetings[g]})
+    msg = user_message.lower().strip()
+    return greetings.get(msg, None)
 
-    # --- Health Q&A with retrieval ---
+# -----------------------------
+# API Routes
+# -----------------------------
+@app.route("/chat", methods=["POST"])
+def chat():
+    user_message = request.json.get("message")
+    if not user_message:
+        return jsonify({"error": "No message provided"}), 400
+
+    # Check greetings
+    greeting_reply = handle_greetings(user_message)
+    if greeting_reply:
+        return jsonify({"reply": greeting_reply})
+
     try:
-        result = qa.invoke({"question": user_message})
+        response = qa.invoke({"question": user_message})
+        answer = response.get("answer", "").strip()
 
-        reply = result.get("answer", "").strip()
+        if not answer or "use the following" in answer.lower():
+            answer = "I don’t know. Please consult a doctor."
 
-        if not reply:
-            reply = "I don’t know. Please consult a doctor."
-
-        memory.save_context({"input": user_message}, {"output": reply})
-
-        return jsonify({"reply": reply})
+        return jsonify({"reply": answer})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 # -----------------------------
 # Run Flask
