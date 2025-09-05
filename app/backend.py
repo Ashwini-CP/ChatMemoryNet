@@ -27,7 +27,6 @@ llm = HuggingFacePipeline(pipeline=local_pipeline)
 # -----------------------------
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# A small health knowledge base
 health_knowledge = [
     "Fever: Take rest, drink warm fluids, and monitor your temperature.",
     "Headache: Drink water, rest in a quiet room, and avoid stress.",
@@ -56,6 +55,7 @@ qa = ConversationalRetrievalChain.from_llm(
     llm=llm,
     retriever=vectorstore.as_retriever(),
     memory=memory,
+    return_source_documents=False
 )
 
 # -----------------------------
@@ -81,15 +81,11 @@ def chat():
 
     # --- Health Q&A with retrieval ---
     try:
-        result = qa.invoke({
-            "input": user_message,
-            "chat_history": memory.load_memory_variables({}).get("chat_history", [])
-        })
+        result = qa.invoke({"question": user_message})
 
-        reply = result["answer"].strip()
+        reply = result.get("answer", "").strip()
 
-        # Fallback if no useful answer
-        if not reply or "don’t know" in reply.lower():
+        if not reply:
             reply = "I don’t know. Please consult a doctor."
 
         memory.save_context({"input": user_message}, {"output": reply})
@@ -98,6 +94,7 @@ def chat():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 # -----------------------------
 # Run Flask
