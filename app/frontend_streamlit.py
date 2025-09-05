@@ -115,17 +115,32 @@ for role, text in st.session_state.chat[-20:]:
     bubble_class = "user-bubble" if role == "user" else "bot-bubble"
     st.markdown(f"<div class='chat-bubble {bubble_class}'>{text}</div>", unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
-
 # ================================
 # 📊 Memory Graph Section
 # ================================
-with st.expander("📈 Memory Graph (raw JSON)", expanded=False):
-    if st.button('🔄 Refresh Graph JSON'):
+st.subheader("📊 Memory Graph")
+
+col_json, col_viz = st.columns([1, 2])
+
+with col_json:
+    st.markdown("### 📝 JSON View")
+    if st.button('🔄 Refresh JSON'):
         try:
             rg = requests.get(f'{backend_url}/graph')
             if rg.ok:
                 st.json(rg.json())
             else:
-                st.error('❌ Failed to fetch graph')
+                st.error('❌ Failed to fetch graph JSON')
         except Exception as e:
             st.error(f'⚠️ Connection error: {e}')
+
+with col_viz:
+    st.markdown("### 🌐 Interactive Graph")
+    try:
+        gv = requests.get(f'{backend_url}/graphviz')
+        if gv.ok:
+            st.components.v1.html(gv.text, height=550, scrolling=True)
+        else:
+            st.error('❌ Failed to fetch graph visualization')
+    except Exception as e:
+        st.error(f'⚠️ Connection error: {e}')
