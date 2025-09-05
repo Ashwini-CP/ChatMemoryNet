@@ -2,9 +2,9 @@ from flask import Flask, request, jsonify
 from transformers import pipeline
 from langchain_community.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
-from langchain.prompts import PromptTemplate
-from langchain.chains import ConversationalRetrievalChain
-from langchain.chains.qa_with_sources import load_qa_with_sources_chain
+from langchain.prompts import ChatPromptTemplate
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains import create_retrieval_chain
 from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
 import os
 
@@ -40,13 +40,12 @@ else:
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 # -----------------------------
-# Custom Prompt
+# Custom Prompt (new format)
 # -----------------------------
-custom_prompt = PromptTemplate(
-    input_variables=["context", "question", "chat_history"],
-    template="""
+prompt = ChatPromptTemplate.from_template("""
 You are a helpful Health Assistant chatbot.
 
+Rules:
 - If the user greets (hi, hello, bye, thank you), reply politely in simple English.
 - Use the provided context to answer health-related questions clearly.
 - If the answer is NOT in the context, reply exactly: "I don’t know. Please consult a doctor."
@@ -59,27 +58,17 @@ Context:
 {context}
 
 Question:
-{question}
+{input}
 
 Answer:
-"""
-)
+""")
 
 # -----------------------------
-# Build Conversational Retrieval Chain
+# Build New QA Chain
 # -----------------------------
-qa_chain = load_qa_with_sources_chain(
-    llm=llm,
-    chain_type="stuff",
-    prompt=custom_prompt
-)
-
-qa = ConversationalRetrievalChain(
-    retriever=vectorstore.as_retriever(search_kwargs={"k": 3}),
-    combine_docs_chain=qa_chain,
-    memory=memory,
-    return_source_documents=False,
-)
+document_chain = create_stuff_documents_chain(llm, prompt)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+qa = create_retrieval_chain(retriever, document_chain)
 
 # -----------------------------
 # API Route
@@ -91,8 +80,12 @@ def chat():
         return jsonify({"error": "No message provided"}), 400
 
     try:
-        response = qa.run(user_message)
-        return jsonify({"reply": response})
+        result = qa.invoke({"input": user_message, "chat_history": memory.load_memory_variables({}).get("chat_history", [])})
+        
+        # Save interaction in memory
+        memory.save_context({"input": user_message}, {"output": result["answer"]})
+        
+        return jsonify({"reply": result["answer"]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
