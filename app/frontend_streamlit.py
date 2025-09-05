@@ -65,7 +65,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.title("🧠 ChatMemoryNet — Health Memory Bot (Tanglish + English)")
+st.title("🧠 ChatMemoryNet — Health Memory Bot (Tanglish)")
 
 # ================================
 # 🔧 Sidebar
