@@ -13,13 +13,13 @@ app = Flask(__name__)
 # -----------------------------
 # Load conversational model
 # -----------------------------
-print("⏳ Loading local model (flan-t5-base)...")
+print("⏳ Loading local conversational model (flan-t5-base)...")
 
 local_pipeline = pipeline(
     "text2text-generation",
-    model="google/flan-t5-base",   # conversational model
-    max_new_tokens=128,
-    device=-1   # CPU (set 0 for GPU)
+    model="google/flan-t5-base",
+    max_new_tokens=256,
+    device=-1   # CPU (set to 0 if you have GPU)
 )
 
 llm = HuggingFacePipeline(pipeline=local_pipeline)
@@ -33,8 +33,15 @@ if os.path.exists("faiss_index"):
     print("📂 Loading FAISS index from disk...")
     vectorstore = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
 else:
-    print("⚠️ No FAISS index found, creating empty one...")
-    vectorstore = FAISS.from_texts(["Welcome to Health Memory Bot!"], embeddings)
+    print("⚠️ No FAISS index found. Creating with sample health knowledge...")
+    texts = [
+        "Symptom: fever, headache. Solution: Take rest, drink warm fluids, and use paracetamol if needed.",
+        "Symptom: cold and cough. Solution: Drink warm water, take steam inhalation, and rest well.",
+        "Symptom: stomach pain. Solution: Eat light food, drink water, and avoid spicy food.",
+        "Symptom: stress or anxiety. Solution: Try meditation, deep breathing, and adequate sleep.",
+        "Symptom: body pain. Solution: Take rest, apply warm compress, and stay hydrated."
+    ]
+    vectorstore = FAISS.from_texts(texts, embeddings)
     vectorstore.save_local("faiss_index")
 
 # -----------------------------
@@ -43,19 +50,17 @@ else:
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 # -----------------------------
-# Custom Prompt (clean, no repetition)
+# Custom Prompt
 # -----------------------------
 custom_prompt = PromptTemplate(
     input_variables=["context", "question"],
     template=(
-        "You are a kind and helpful health assistant.\n\n"
-        "Answer in simple, clear language.\n\n"
+        "You are a helpful health assistant.\n\n"
+        "Use the following context to answer the user in simple, clear language.\n"
+        "If the answer is not in the context, reply exactly: I don’t know. Please consult a doctor.\n\n"
         "Context:\n{context}\n\n"
         "User: {question}\n\n"
-        "Rules:\n"
-        "- If the answer is found in the context, reply with it clearly.\n"
-        "- If no answer is found in the context, reply exactly: I don’t know. Please consult a doctor.\n"
-        "- If the user just greets or introduces themselves, reply politely as their health assistant.\n\n"
+        "Chat History: You should remember previous chats to make replies consistent.\n\n"
         "Assistant:"
     )
 )
@@ -65,10 +70,10 @@ custom_prompt = PromptTemplate(
 # -----------------------------
 qa = ConversationalRetrievalChain.from_llm(
     llm=llm,
-    retriever=vectorstore.as_retriever(),
+    retriever=vectorstore.as_retriever(search_kwargs={"k": 3}),
     memory=memory,
     combine_docs_chain_kwargs={"prompt": custom_prompt},
-    return_source_documents=False   # don’t leak docs to user
+    return_source_documents=False
 )
 
 # -----------------------------
