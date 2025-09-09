@@ -73,8 +73,9 @@ else:
 # -----------------------------
 # Per-user memory & graph storage
 # -----------------------------
-user_memories = {}
-user_graphs = {}
+user_states = {}   # stores {user_id: {"name": str}}
+user_graphs = {}   # stores conversation graphs
+
 
 # -----------------------------
 # Greeting handler
@@ -88,86 +89,64 @@ def handle_greetings(user_message: str, user_name: str = None):
     }
     return greetings.get(user_message.lower().strip(), None)
 
-# -----------------------------
-# Main chat orchestrator
-# -----------------------------
-def orchestrator_chat(user_message, memory, user_id):
-    # Check if we already know the username
-    graph = user_graphs[user_id]
-    user_name = graph.get("user_name")
-
-    # Detect if user provides their name
-    if user_message.lower().startswith("my name is"):
-        user_name = user_message[10:].strip().capitalize()
-        graph["user_name"] = user_name
-        return f"Nice to meet you, {user_name}! How are you feeling today?"
-
-    # Greetings
-    greeting_reply = handle_greetings(user_message, user_name)
-    if greeting_reply:
-        return greeting_reply
-
-    # Symptom direct match
-    for key, solution in symptom_solution_map.items():
-        if key in user_message.lower():
-            if user_name:
-                return f"{solution} Take care, {user_name}."
-            return solution
-
-    # FAISS search
-    docs = vectorstore.similarity_search(user_message, k=1)
-    if docs:
-        retrieved_key = docs[0].page_content.lower().strip()
-        solution = symptom_solution_map.get(retrieved_key, None)
-        if solution:
-            if user_name:
-                return f"{solution} Take care, {user_name}."
-            return solution
-
-    # Fallback
-    if user_name:
-        return f"I’m not sure, {user_name}. Please consult a doctor."
-    return "I don’t know. Please consult a doctor."
 
 # -----------------------------
 # Chat endpoint
 # -----------------------------
-@app.post("/chat")
-async def chat_endpoint(item: ChatItem):
-    user_id = item.user_id
-    message = item.message.strip()
+@app.route("/chat", methods=["POST"])
+def chat_endpoint():
+    data = request.get_json()
+    user_id = data.get("user_id", "default_user")
+    message = data.get("message", "").strip()
 
     # Ensure user state
     if user_id not in user_states:
         user_states[user_id] = {"name": None}
+        user_graphs[user_id] = nx.DiGraph()
 
     state = user_states[user_id]
     reply = ""
 
     # --- Check if name already stored ---
     if state["name"] is None:
-        # Try to extract a name from user input
         lowered = message.lower()
         if any(kw in lowered for kw in ["my name is", "i am", "this is"]):
-            # Extract name (take last word as name)
+            # Extract last word as name
             name = message.split()[-1].capitalize()
             state["name"] = name
             reply = f"Nice to meet you, {name}! How can I help you today?"
         elif len(message.split()) == 1 and message.isalpha():
-            # If single word (like 'Ashwini'), assume it's a name
+            # If single word, assume it's a name
             state["name"] = message.capitalize()
             reply = f"Hello {state['name']}! Tell me how you're feeling."
         else:
             reply = "Hello! May I know your name?"
     else:
-        # --- Handle symptoms normally ---
-        # (Your symptom detection logic here)
-        if "back pain" in message.lower():
-            reply = f"Back pain irundhaal, light food sapdunga heavy food avoid pannunga. Take care, {state['name']}."
-        elif "fever" in message.lower():
-            reply = f"Fever irundhaal, water adhigama kudichunga rest eduthunga. Take care, {state['name']}."
+        # --- Handle greetings ---
+        greeting_reply = handle_greetings(message, state["name"])
+        if greeting_reply:
+            reply = greeting_reply
         else:
-            reply = f"I’m not sure, {state['name']}. Please consult a doctor."
+            # --- Handle symptoms ---
+            found = False
+            for key, solution in symptom_solution_map.items():
+                if key in message.lower():
+                    reply = f"{solution} Take care, {state['name']}."
+                    found = True
+                    break
+
+            if not found:
+                # --- FAISS search ---
+                docs = vectorstore.similarity_search(message, k=1)
+                if docs:
+                    retrieved_key = docs[0].page_content.lower().strip()
+                    solution = symptom_solution_map.get(retrieved_key, None)
+                    if solution:
+                        reply = f"{solution} Take care, {state['name']}."
+                    else:
+                        reply = f"I’m not sure, {state['name']}. Please consult a doctor."
+                else:
+                    reply = f"I’m not sure, {state['name']}. Please consult a doctor."
 
     # Update graph (store conversation)
     G = user_graphs[user_id]
@@ -175,35 +154,37 @@ async def chat_endpoint(item: ChatItem):
     G.add_node(reply, type="bot_reply")
     G.add_edge(message, reply)
 
-    return {"reply": reply}
+    # Save graph as JSON
+    os.makedirs("storage", exist_ok=True)
+    graph_path = f"storage/graph_{user_id}.json"
+    with open(graph_path, "w", encoding="utf-8") as f:
+        json.dump({"nodes": [{"role": "user", "content": message},
+                             {"role": "bot", "content": reply}]}, f, indent=2)
+
+    return jsonify({"reply": reply})
+
 
 # -----------------------------
 # Graph visualization
 # -----------------------------
 @app.route("/graphviz/<user_id>", methods=["GET"])
 def get_graph_viz(user_id):
-    graph_path = f"storage/graph_{user_id}.json"
-    if not os.path.exists(graph_path):
+    if user_id not in user_graphs:
         return "No graph available for this user."
 
-    with open(graph_path, "r", encoding="utf-8") as f:
-        graph_data = json.load(f)
-
-    G = nx.DiGraph()
-    for i, node in enumerate(graph_data["nodes"]):
-        node_id = f"{node['role']}_{i}"
-        G.add_node(node_id, label=f"{node['role']}: {node['content'][:40]}")
-        if i > 0:
-            prev_id = f"{graph_data['nodes'][i-1]['role']}_{i-1}"
-            G.add_edge(prev_id, node_id)
+    G = user_graphs[user_id]
 
     net = Network(height="500px", width="100%", directed=True)
     net.from_nx(G)
-    net.save_graph(f"storage/chat_graph_{user_id}.html")
 
-    with open(f"storage/chat_graph_{user_id}.html", "r", encoding="utf-8") as f:
+    os.makedirs("storage", exist_ok=True)
+    graph_file = f"storage/chat_graph_{user_id}.html"
+    net.save_graph(graph_file)
+
+    with open(graph_file, "r", encoding="utf-8") as f:
         html = f.read()
     return html
+
 
 # -----------------------------
 # Run Flask
