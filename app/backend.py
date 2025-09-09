@@ -9,7 +9,7 @@ import re
 import networkx as nx
 from pyvis.network import Network
 
-app = Flask(_name_)
+app = Flask(__name__)
 
 # -----------------------------
 # Load local model
