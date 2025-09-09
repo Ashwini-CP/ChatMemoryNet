@@ -4,10 +4,9 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from transformers import pipeline
 from langchain_community.vectorstores import FAISS
-from langchain.memory import ConversationBufferMemory
 from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
 import pandas as pd
-import os, re
+import os, re, uuid
 import networkx as nx
 from pyvis.network import Network
 
@@ -132,8 +131,12 @@ def orchestrator_chat(user_id, message):
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json
-    user_id = data.get("user_id", "default")
     message = data.get("message", "").strip()
+
+    # Auto-generate user_id if not provided
+    user_id = data.get("user_id")
+    if not user_id:
+        user_id = str(uuid.uuid4())  # unique ID for new user
 
     # Init state + graph if new user
     if user_id not in user_states:
@@ -165,7 +168,7 @@ def chat():
     G.add_edge(root_node, user_node)
     G.add_edge(user_node, bot_node)
 
-    return jsonify({"reply": reply})
+    return jsonify({"user_id": user_id, "reply": reply})
 
 # ===============================
 # 📊 Get Graph as HTML (per user)
