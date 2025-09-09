@@ -132,57 +132,50 @@ def orchestrator_chat(user_message, memory, user_id):
 # -----------------------------
 # Chat endpoint
 # -----------------------------
-@app.route("/chat", methods=["POST"])
-def chat():
-    data = request.get_json()
-    user_id = data.get("user_id", "default")
-    user_message = data.get("message", "").strip()
+@app.post("/chat")
+async def chat_endpoint(item: ChatItem):
+    user_id = item.user_id
+    message = item.message.strip()
 
-    # ✅ Initialize user-specific memory
-    if user_id not in user_memories:
-        user_memories[user_id] = ConversationBufferMemory(
-            memory_key="chat_history", return_messages=True
-        )
-    memory = user_memories[user_id]
+    # Ensure user state
+    if user_id not in user_states:
+        user_states[user_id] = {"name": None}
 
-    # ✅ Initialize user-specific graph
-    graph_path = f"storage/graph_{user_id}.json"
-    if user_id not in user_graphs:
-        if os.path.exists(graph_path):
-            with open(graph_path, "r", encoding="utf-8") as f:
-                user_graphs[user_id] = json.load(f)
+    state = user_states[user_id]
+    reply = ""
+
+    # --- Check if name already stored ---
+    if state["name"] is None:
+        # Try to extract a name from user input
+        lowered = message.lower()
+        if any(kw in lowered for kw in ["my name is", "i am", "this is"]):
+            # Extract name (take last word as name)
+            name = message.split()[-1].capitalize()
+            state["name"] = name
+            reply = f"Nice to meet you, {name}! How can I help you today?"
+        elif len(message.split()) == 1 and message.isalpha():
+            # If single word (like 'Ashwini'), assume it's a name
+            state["name"] = message.capitalize()
+            reply = f"Hello {state['name']}! Tell me how you're feeling."
         else:
-            user_graphs[user_id] = {"nodes": [], "edges": [], "user_name": None}
-
-    graph = user_graphs[user_id]
-
-    # Generate reply
-    reply = orchestrator_chat(user_message, memory, user_id)
-
-    # Save memory
-    memory.chat_memory.add_user_message(user_message)
-    memory.chat_memory.add_ai_message(reply)
-
-    # Save graph nodes
-    graph["nodes"].append({"role": "user", "content": user_message})
-    graph["nodes"].append({"role": "bot", "content": reply})
-
-    with open(graph_path, "w", encoding="utf-8") as f:
-        json.dump(graph, f, indent=2)
-
-    return jsonify({"reply": reply})
-
-# -----------------------------
-# Graph JSON endpoint
-# -----------------------------
-@app.route("/graph/<user_id>", methods=["GET"])
-def get_graph_json(user_id):
-    graph_path = f"storage/graph_{user_id}.json"
-    if os.path.exists(graph_path):
-        with open(graph_path, "r", encoding="utf-8") as f:
-            return jsonify(json.load(f))
+            reply = "Hello! May I know your name?"
     else:
-        return jsonify({"nodes": [], "edges": [], "user_name": None})
+        # --- Handle symptoms normally ---
+        # (Your symptom detection logic here)
+        if "back pain" in message.lower():
+            reply = f"Back pain irundhaal, light food sapdunga heavy food avoid pannunga. Take care, {state['name']}."
+        elif "fever" in message.lower():
+            reply = f"Fever irundhaal, water adhigama kudichunga rest eduthunga. Take care, {state['name']}."
+        else:
+            reply = f"I’m not sure, {state['name']}. Please consult a doctor."
+
+    # Update graph (store conversation)
+    G = user_graphs[user_id]
+    G.add_node(message, type="user_message")
+    G.add_node(reply, type="bot_reply")
+    G.add_edge(message, reply)
+
+    return {"reply": reply}
 
 # -----------------------------
 # Graph visualization
