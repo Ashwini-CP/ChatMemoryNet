@@ -76,84 +76,83 @@ else:
 # -----------------------------
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
+# User profiles
+user_profiles = {}
+
+def get_user_profile(user_id):
+    if user_id not in user_profiles:
+        user_profiles[user_id] = {"name": None, "symptoms": []}
+    return user_profiles[user_id]
+
 # -----------------------------
-# Preprocess Tanglish text
+# Preprocess text
 # -----------------------------
 def preprocess_text(text: str) -> str:
     text = text.lower().strip()
-    # Remove filler words (extend this list as needed)
     fillers = ["ah", "la", "da", "vanthuruchu", "irukku", "aagudhu", "kuduthu", "pannunga"]
     for f in fillers:
         text = text.replace(f, "")
-    # Remove multiple spaces
     text = re.sub(r"\s+", " ", text)
     return text.strip()
-
-# -----------------------------
-# Greeting handler
-# -----------------------------
-def handle_greetings(user_message: str):
-    greetings = {
-        "hi": "Hello! How can I help you today?",
-        "hello": "Hi there! How are you feeling?",
-        "bye": "Goodbye! Take care of your health.",
-        "thank you": "You're welcome! Stay healthy."
-    }
-    return greetings.get(user_message.lower().strip(), None)
 
 # -----------------------------
 # Chat endpoint
 # -----------------------------
 @app.route("/chat", methods=["POST"])
 def chat():
+    user_id = request.json.get("user_id", "default")
     user_message = request.json.get("message", "").strip()
     if not user_message:
         return jsonify({"error": "No message provided"}), 400
 
-    cleaned_message = preprocess_text(user_message)
-
-    # Save user message to memory
+    profile = get_user_profile(user_id)
     memory.chat_memory.add_user_message(user_message)
 
-    # Greetings first
-    greeting_reply = handle_greetings(cleaned_message)
-    if greeting_reply:
-        memory.chat_memory.add_ai_message(greeting_reply)
-        return jsonify({"reply": greeting_reply})
-
-    try:
-        # 1️⃣ Try FAISS similarity search first
-        docs = vectorstore.similarity_search(cleaned_message, k=1)
-        if docs:
-            retrieved_key = docs[0].page_content.lower().strip()
-            solution = symptom_solution_map.get(retrieved_key, None)
-            if solution:
-                memory.chat_memory.add_ai_message(solution)
-                return jsonify({"reply": solution})
-
-        # 2️⃣ Fallback: substring check in dictionary
-        for key, solution in symptom_solution_map.items():
-            if key in cleaned_message:
-                memory.chat_memory.add_ai_message(solution)
-                return jsonify({"reply": solution})
-
-        # 3️⃣ Fallback: default response
-        reply = "I don’t know. Please consult a doctor."
+    # Step 1: Ask name if not stored
+    if profile["name"] is None:
+        profile["name"] = user_message
+        reply = f"Nice to meet you, {profile['name']}! What symptoms are you facing today?"
         memory.chat_memory.add_ai_message(reply)
         return jsonify({"reply": reply})
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    # Step 2: If no symptoms stored yet
+    if not profile["symptoms"]:
+        profile["symptoms"].append(user_message)
+        cleaned_message = preprocess_text(user_message)
+
+        docs = vectorstore.similarity_search(cleaned_message, k=1)
+        if docs:
+            retrieved_key = docs[0].page_content.lower().strip()
+            solution = symptom_solution_map.get(retrieved_key, "I’m not sure. Please consult a doctor.")
+        else:
+            solution = "I’m not sure. Please consult a doctor."
+
+        reply = f"Thanks {profile['name']}! You said you have {user_message}. {solution}"
+        memory.chat_memory.add_ai_message(reply)
+        return jsonify({"reply": reply})
+
+    # Step 3: Continue normal chat
+    cleaned_message = preprocess_text(user_message)
+
+    docs = vectorstore.similarity_search(cleaned_message, k=1)
+    if docs:
+        retrieved_key = docs[0].page_content.lower().strip()
+        solution = symptom_solution_map.get(retrieved_key, None)
+        if solution:
+            memory.chat_memory.add_ai_message(solution)
+            return jsonify({"reply": solution})
+
+    reply = "I don’t know. Please consult a doctor."
+    memory.chat_memory.add_ai_message(reply)
+    return jsonify({"reply": reply})
 
 # -----------------------------
 # Graph JSON
 # -----------------------------
 @app.route("/graph", methods=["GET"])
 def get_graph_json():
-    history = []
-    for msg in memory.chat_memory.messages:
-        history.append({"role": msg.type, "content": msg.content})
-    return jsonify({"chat_history": history})
+    history = [{"role": msg.type, "content": msg.content} for msg in memory.chat_memory.messages]
+    return jsonify({"chat_history": history, "profiles": user_profiles})
 
 # -----------------------------
 # Graph Visualization
@@ -162,16 +161,21 @@ def get_graph_json():
 def get_graph_viz():
     G = nx.DiGraph()
 
-    # Create nodes for each message
+    # Add user profiles
+    for uid, profile in user_profiles.items():
+        G.add_node(uid, label=f"User: {profile['name']}")
+        for symptom in profile["symptoms"]:
+            G.add_node(f"{uid}_{symptom}", label=f"Symptom: {symptom}")
+            G.add_edge(uid, f"{uid}_{symptom}")
+
+    # Add chat history
     for i, msg in enumerate(memory.chat_memory.messages):
         node_id = f"{msg.type}_{i}"
         G.add_node(node_id, label=f"{msg.type}: {msg.content[:40]}")
-
         if i > 0:
             prev_id = f"{memory.chat_memory.messages[i-1].type}_{i-1}"
             G.add_edge(prev_id, node_id)
 
-    # Build interactive graph
     net = Network(height="500px", width="100%", directed=True)
     net.from_nx(G)
     net.save_graph("chat_graph.html")
