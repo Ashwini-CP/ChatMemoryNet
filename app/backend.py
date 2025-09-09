@@ -129,6 +129,9 @@ def orchestrator_chat(user_id, message):
 # ===============================
 # 📌 Chat Endpoint
 # ===============================
+# ===============================
+# 📌 Chat Endpoint
+# ===============================
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json
@@ -148,11 +151,41 @@ def chat():
 
     # Update user graph
     G = user_graphs[user_id]
-    G.add_node(message, type="user")
-    G.add_node(reply, type="bot")
-    G.add_edge(message, reply)
+
+    # If first time, create root node with username (or user_id)
+    if state["name"] and not G.has_node(state["name"]):
+        G.add_node(state["name"], type="user_root")
+
+    # Conversation nodes
+    user_node = f"user: {message}"
+    bot_node = f"bot: {reply}"
+
+    G.add_node(user_node, type="user_message")
+    G.add_node(bot_node, type="bot_reply")
+
+    # Attach conversation to root (username)
+    if state["name"]:
+        G.add_edge(state["name"], user_node)
+    else:
+        G.add_edge(user_id, user_node)
+
+    G.add_edge(user_node, bot_node)
 
     return jsonify({"reply": reply})
+
+# ===============================
+# 📊 Get Graph as HTML
+# ===============================
+@app.route("/graphviz/<user_id>", methods=["GET"])
+def get_graph_viz(user_id):
+    if user_id not in user_graphs:
+        return "No graph available for this user."
+
+    G = user_graphs[user_id]
+    net = Network(height="500px", width="100%", directed=True)
+    net.from_nx(G)
+    return net.generate_html()
+
 
 # ===============================
 # 📊 Get Graph as HTML
