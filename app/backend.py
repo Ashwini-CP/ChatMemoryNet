@@ -134,25 +134,30 @@ def chat():
     data = request.json
     message = data.get("message", "").strip()
 
-    # Extract user name
+    # Extract user_name from message or use provided user_id
     user_name = data.get("user_id") or extract_name(message) or f"Anonymous-{str(uuid.uuid4())[:6]}"
 
-    # Create root node if new user
+    # Initialize user state if not exists
+    if user_name not in user_states:
+        user_states[user_name] = {"name": None, "history": []}
+
+    bot_reply = orchestrator_chat(user_name, message)
+
+    # Save history
+    state = user_states[user_name]
+    state["history"].append({"user": message, "bot": bot_reply})
+
+    # Update graph
     if not global_graph.has_node(user_name):
         global_graph.add_node(user_name, type="user_root")
 
-    # Add conversation nodes
     user_node = f"user: {message}"
-    bot_reply = orchestrator_chat(user_name, message)
     bot_node = f"bot: {bot_reply}"
 
     global_graph.add_node(user_node, type="user_message")
     global_graph.add_node(bot_node, type="bot_reply")
     global_graph.add_edge(user_name, user_node)
     global_graph.add_edge(user_node, bot_node)
-
-    # Save user history
-    user_states[user_name]["history"].append({"user": message, "bot": bot_reply})
 
     return jsonify({"user_id": user_name, "reply": bot_reply})
 
