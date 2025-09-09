@@ -56,6 +56,9 @@ else:
     }
     health_knowledge = list(symptom_solution_map.keys())
 
+print("✅ Loaded dataset with", len(symptom_solution_map), "entries")
+print("🔎 Sample mapping:", list(symptom_solution_map.items())[:5])
+
 # -----------------------------
 # Build FAISS
 # -----------------------------
@@ -95,10 +98,8 @@ def chat():
     if not user_message:
         return jsonify({"error": "No message provided"}), 400
 
-    # Save user message to memory
     memory.chat_memory.add_user_message(user_message)
 
-    # Greetings first
     greeting_reply = handle_greetings(user_message)
     if greeting_reply:
         memory.chat_memory.add_ai_message(greeting_reply)
@@ -129,6 +130,17 @@ def chat():
         return jsonify({"error": str(e)}), 500
 
 # -----------------------------
+# Rebuild FAISS endpoint
+# -----------------------------
+@app.route("/rebuild", methods=["POST"])
+def rebuild_index():
+    global vectorstore
+    print("♻️ Rebuilding FAISS index from dataset...")
+    vectorstore = FAISS.from_texts(health_knowledge, embeddings)
+    vectorstore.save_local("faiss_index")
+    return jsonify({"status": "ok", "count": len(health_knowledge)})
+
+# -----------------------------
 # Graph JSON
 # -----------------------------
 @app.route("/graph", methods=["GET"])
@@ -145,7 +157,6 @@ def get_graph_json():
 def get_graph_viz():
     G = nx.DiGraph()
 
-    # Create nodes for each message
     for i, msg in enumerate(memory.chat_memory.messages):
         node_id = f"{msg.type}_{i}"
         G.add_node(node_id, label=f"{msg.type}: {msg.content[:40]}")
@@ -154,7 +165,6 @@ def get_graph_viz():
             prev_id = f"{memory.chat_memory.messages[i-1].type}_{i-1}"
             G.add_edge(prev_id, node_id)
 
-    # Build interactive graph
     net = Network(height="500px", width="100%", directed=True)
     net.from_nx(G)
     net.save_graph("chat_graph.html")
