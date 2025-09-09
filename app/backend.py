@@ -6,7 +6,7 @@ from transformers import pipeline
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
 import pandas as pd
-import os, re
+import os, re, uuid
 import networkx as nx
 from pyvis.network import Network
 
@@ -77,10 +77,10 @@ else:
     vectorstore.save_local("faiss_index")
 
 # ===============================
-# 🧾 Global User States & Graph
+# 🧾 User States & Graphs
 # ===============================
-global_graph = nx.DiGraph()      # Single graph for all users
-user_states = {}                 # { user_name: {"history": [], "name": str} }
+user_states = {}   # { user_id: {"name": str, "history": []} }
+user_graphs = {}   # { user_id: nx.DiGraph }
 
 # ===============================
 # 🧾 Utility: Extract Name
@@ -98,15 +98,22 @@ def extract_name(message: str) -> str:
 # ===============================
 # 💬 Chat Orchestrator
 # ===============================
-def orchestrator_chat(user_name, message):
-    # Init state if new user
-    if user_name not in user_states:
-        user_states[user_name] = {"name": user_name, "history": []}
+def orchestrator_chat(user_id, message):
+    state = user_states[user_id]
+
+    # Handle name if not set
+    if state["name"] is None:
+        name = extract_name(message)
+        if name:
+            state["name"] = name
+            return f"Nice to meet you, {name}! How can I help you today?"
+        else:
+            return "Hello! May I know your name?"
 
     # Symptom direct match
     for key, solution in symptom_solution_map.items():
         if key in message.lower():
-            return f"{solution} Take care, {user_name}."
+            return f"{solution} Take care, {state['name']}."
 
     # FAISS semantic search
     docs = vectorstore.similarity_search(message, k=1)
@@ -114,9 +121,9 @@ def orchestrator_chat(user_name, message):
         retrieved = docs[0].page_content.lower().strip()
         solution = symptom_solution_map.get(retrieved, None)
         if solution:
-            return f"{solution} Take care, {user_name}."
+            return f"{solution} Take care, {state['name']}."
 
-    return f"I’m not sure, {user_name}. Please consult a doctor."
+    return f"I’m not sure, {state['name']}. Please consult a doctor."
 
 # ===============================
 # 📌 Chat Endpoint
@@ -126,37 +133,54 @@ def chat():
     data = request.json
     message = data.get("message", "").strip()
 
-    # Extract user name
-    user_name = extract_name(message)
-    if not user_name:
-        user_name = "Anonymous"
+    # Auto-generate user_id if not provided
+    user_id = data.get("user_id")
+    if not user_id:
+        user_id = str(uuid.uuid4())  # unique ID for new user
 
-    # Create root node if new user
-    if not global_graph.has_node(user_name):
-        global_graph.add_node(user_name, type="user_root")
+    # Init state + graph if new user
+    if user_id not in user_states:
+        user_states[user_id] = {"name": None, "history": []}
+        user_graphs[user_id] = nx.DiGraph()
 
-    # Add conversation nodes
+    state = user_states[user_id]
+    reply = orchestrator_chat(user_id, message)
+
+    # Save history
+    state["history"].append({"user": message, "bot": reply})
+
+    # Update user graph
+    G = user_graphs[user_id]
+
+    # If first time, create root node with username (or user_id)
+    root_node = state["name"] if state["name"] else user_id
+    if not G.has_node(root_node):
+        G.add_node(root_node, type="user_root")
+
+    # Conversation nodes
     user_node = f"user: {message}"
-    bot_reply = orchestrator_chat(user_name, message)
-    bot_node = f"bot: {bot_reply}"
+    bot_node = f"bot: {reply}"
 
-    global_graph.add_node(user_node, type="user_message")
-    global_graph.add_node(bot_node, type="bot_reply")
-    global_graph.add_edge(user_name, user_node)
-    global_graph.add_edge(user_node, bot_node)
+    G.add_node(user_node, type="user_message")
+    G.add_node(bot_node, type="bot_reply")
 
-    # Save user history
-    user_states[user_name]["history"].append({"user": message, "bot": bot_reply})
+    # Attach conversation to root
+    G.add_edge(root_node, user_node)
+    G.add_edge(user_node, bot_node)
 
-    return jsonify({"reply": bot_reply})
+    return jsonify({"user_id": user_id, "reply": reply})
 
 # ===============================
-# 📊 Graphviz Endpoint (All Users)
+# 📊 Get Graph as HTML (per user)
 # ===============================
-@app.route("/graphviz", methods=["GET"])
-def get_graph_viz():
-    net = Network(height="600px", width="100%", directed=True)
-    net.from_nx(global_graph)
+@app.route("/graphviz/<user_id>", methods=["GET"])
+def get_graph_viz(user_id):
+    if user_id not in user_graphs:
+        return "No graph available for this user."
+
+    G = user_graphs[user_id]
+    net = Network(height="500px", width="100%", directed=True)
+    net.from_nx(G)
     return net.generate_html()
 
 # ===============================
