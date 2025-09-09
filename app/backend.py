@@ -25,7 +25,7 @@ llm = HuggingFacePipeline(pipeline=local_pipeline)
 # -----------------------------
 # Load dataset
 # -----------------------------
-DATA_PATH = "data/healthcare_tanglish_dataset.csv"
+DATA_PATH = "data/healthcare_tanglish_dataset (2).csv"
 
 if os.path.exists(DATA_PATH):
     df = pd.read_csv(DATA_PATH)
