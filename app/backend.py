@@ -14,14 +14,14 @@ DATA_PATH = "data/healthcare_tanglish_dataset (2).csv"
 df = pd.read_csv(DATA_PATH)
 
 # Ensure lowercase for consistency
-df["symptom"] = df["symptom"].astype(str).str.lower().str.strip()
+df["symptoms"] = df["symptoms"].astype(str).str.lower().str.strip()
 df["symptom_text"] = df["symptom_text"].astype(str).str.lower().str.strip()
 df["solution"] = df["solution"].astype(str).str.strip()
 
 # Build mapping: symptom_text → {symptom, solution}
 symptom_solution_map = {
     row["symptom_text"]: {
-        "symptom": row["symptom"],
+        "symptoms": row["symptoms"],
         "solution": row["solution"]
     }
     for _, row in df.iterrows()
@@ -107,11 +107,11 @@ def chat():
         if retrieved_key in symptom_solution_map:
             mapped = symptom_solution_map[retrieved_key]
             reply_data = {
-                "symptom": mapped["symptom"],
+                "symptoms": mapped["symptoms"],
                 "symptom_text": retrieved_key,
                 "solution": mapped["solution"]
             }
-            profile["symptoms"].append(mapped["symptom"])
+            profile["symptoms"].append(mapped["symptoms"])
 
     memory.chat_memory.add_user_message(user_message)
     memory.chat_memory.add_ai_message(reply_data["solution"])
