@@ -132,46 +132,19 @@ def orchestrator_chat(user_id, message):
 # ===============================
 # 📌 Chat Endpoint
 # ===============================
-@app.route("/chat", methods=["POST"])
-def chat():
-    data = request.json
-    user_id = data.get("user_id", "default")
-    message = data.get("message", "").strip()
+# Dictionary to hold memory per user
+# Dictionary to hold memory per user
+user_memories = {}
 
-    # Init state + graph if new user
-    if user_id not in user_states:
-        user_states[user_id] = {"name": None, "history": []}
-        user_graphs[user_id] = nx.DiGraph()
+def get_user_memory(user_id):
+    if user_id not in user_memories:
+        user_memories[user_id] = ConversationBufferMemory(
+            memory_key="chat_history", 
+            return_messages=True
+        )
+    return user_memories[user_id]
 
-    state = user_states[user_id]
-    reply = orchestrator_chat(user_id, message)
 
-    # Save history
-    state["history"].append({"user": message, "bot": reply})
-
-    # Update user graph
-    G = user_graphs[user_id]
-
-    # If first time, create root node with username (or user_id)
-    if state["name"] and not G.has_node(state["name"]):
-        G.add_node(state["name"], type="user_root")
-
-    # Conversation nodes
-    user_node = f"user: {message}"
-    bot_node = f"bot: {reply}"
-
-    G.add_node(user_node, type="user_message")
-    G.add_node(bot_node, type="bot_reply")
-
-    # Attach conversation to root (username)
-    if state["name"]:
-        G.add_edge(state["name"], user_node)
-    else:
-        G.add_edge(user_id, user_node)
-
-    G.add_edge(user_node, bot_node)
-
-    return jsonify({"reply": reply})
 
 # ===============================
 # 📊 Get Graph as HTML
