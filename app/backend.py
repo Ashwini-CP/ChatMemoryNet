@@ -5,7 +5,6 @@ from langchain.memory import ConversationBufferMemory
 from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
 import pandas as pd
 import os
-import re
 import networkx as nx
 from pyvis.network import Network
 
@@ -25,7 +24,7 @@ llm = HuggingFacePipeline(pipeline=local_pipeline)
 # -----------------------------
 # Load dataset
 # -----------------------------
-DATA_PATH = "data/healthcare_tanglish_dataset (2).csv"
+DATA_PATH = "data/healthcare_tanglish_dataset.csv"
 
 if os.path.exists(DATA_PATH):
     df = pd.read_csv(DATA_PATH)
@@ -45,10 +44,10 @@ if os.path.exists(DATA_PATH):
             knowledge_entries.extend([symptom, symptom_text])
 
         health_knowledge = list(set(knowledge_entries))
+        print(f"✅ Loaded dataset with {len(df)} records")
     else:
         raise ValueError("❌ CSV must contain 'symptoms', 'symptom_text', and 'solution' columns")
 else:
-    print("⚠ Dataset not found, using fallback dictionary...")
     symptom_solution_map = {
         "fever": "Take rest, drink warm fluids, and monitor your temperature.",
         "headache": "Drink water, rest in a quiet room, and avoid stress.",
@@ -57,6 +56,7 @@ else:
         "stomach pain": "Take rest, drink warm water, and avoid spicy food."
     }
     health_knowledge = list(symptom_solution_map.keys())
+    print("⚠️ Dataset not found, using fallback dictionary...")
 
 # -----------------------------
 # Build FAISS
@@ -67,7 +67,7 @@ if os.path.exists("faiss_index"):
     print("📂 Loading FAISS index from disk...")
     vectorstore = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
 else:
-    print("⚠ No FAISS index found, creating from dataset...")
+    print("⚠️ No FAISS index found, creating from dataset...")
     vectorstore = FAISS.from_texts(health_knowledge, embeddings)
     vectorstore.save_local("faiss_index")
 
@@ -75,27 +75,15 @@ else:
 # Memory
 # -----------------------------
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-
-# -----------------------------
-# Preprocess Tanglish text
-# -----------------------------
-def preprocess_text(text: str) -> str:
-    text = text.lower().strip()
-    # Remove filler words (extend this list as needed)
-    fillers = ["ah", "la", "da", "vanthuruchu", "irukku", "aagudhu", "kuduthu", "pannunga"]
-    for f in fillers:
-        text = text.replace(f, "")
-    # Remove multiple spaces
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+user_name = None   # store the user’s name globally
 
 # -----------------------------
 # Greeting handler
 # -----------------------------
 def handle_greetings(user_message: str):
     greetings = {
-        "hi": "Hello! How can I help you today?",
-        "hello": "Hi there! How are you feeling?",
+        "hi": "Hello! May I know your name?",
+        "hello": "Hi there! What’s your name?",
         "bye": "Goodbye! Take care of your health.",
         "thank you": "You're welcome! Stay healthy."
     }
@@ -106,39 +94,58 @@ def handle_greetings(user_message: str):
 # -----------------------------
 @app.route("/chat", methods=["POST"])
 def chat():
+    global user_name
+
     user_message = request.json.get("message", "").strip()
     if not user_message:
         return jsonify({"error": "No message provided"}), 400
 
-    cleaned_message = preprocess_text(user_message)
-
     # Save user message to memory
     memory.chat_memory.add_user_message(user_message)
 
-    # Greetings first
-    greeting_reply = handle_greetings(cleaned_message)
+    # ----------------------
+    # If user_name not set → ask for name
+    # ----------------------
+    if not user_name:
+        if user_message.lower().startswith(("hi", "hello")):
+            reply = "Hello! May I know your name?"
+        elif user_message.lower().startswith("my name is"):
+            user_name = user_message.replace("my name is", "").strip().title()
+            reply = f"Nice to meet you, {user_name}! Tell me what’s troubling you today?"
+        else:
+            reply = "I don’t know your name yet. Could you please tell me your name? (e.g., My name is Arun)"
+        
+        memory.chat_memory.add_ai_message(reply)
+        return jsonify({"reply": reply})
+
+    # ----------------------
+    # Greetings
+    # ----------------------
+    greeting_reply = handle_greetings(user_message)
     if greeting_reply:
         memory.chat_memory.add_ai_message(greeting_reply)
         return jsonify({"reply": greeting_reply})
 
     try:
-        # 1️⃣ Try FAISS similarity search first
-        docs = vectorstore.similarity_search(cleaned_message, k=1)
+        # 1️⃣ Direct match
+        for key, solution in symptom_solution_map.items():
+            if key in user_message.lower():
+                personalized = f"{solution} Take care, {user_name}."
+                memory.chat_memory.add_ai_message(personalized)
+                return jsonify({"reply": personalized})
+
+        # 2️⃣ FAISS similarity search
+        docs = vectorstore.similarity_search(user_message, k=1)
         if docs:
             retrieved_key = docs[0].page_content.lower().strip()
             solution = symptom_solution_map.get(retrieved_key, None)
             if solution:
-                memory.chat_memory.add_ai_message(solution)
-                return jsonify({"reply": solution})
+                personalized = f"{solution} Take care, {user_name}."
+                memory.chat_memory.add_ai_message(personalized)
+                return jsonify({"reply": personalized})
 
-        # 2️⃣ Fallback: substring check in dictionary
-        for key, solution in symptom_solution_map.items():
-            if key in cleaned_message:
-                memory.chat_memory.add_ai_message(solution)
-                return jsonify({"reply": solution})
-
-        # 3️⃣ Fallback: default response
-        reply = "I don’t know. Please consult a doctor."
+        # 3️⃣ Fallback
+        reply = f"I’m not sure, {user_name}. Please consult a doctor."
         memory.chat_memory.add_ai_message(reply)
         return jsonify({"reply": reply})
 
