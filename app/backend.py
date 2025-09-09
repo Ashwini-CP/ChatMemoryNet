@@ -96,10 +96,19 @@ def extract_name(message: str) -> str:
 # ===============================
 # 💬 Chat Orchestrator
 # ===============================
-def orchestrator_chat(user_name, message):
-    # Initialize state if new user
-    if user_name not in user_states:
-        user_states[user_name] = {"history": [], "name": user_name}
+def orchestrator_chat(user_id, message):
+    state = user_states[user_id]
+
+    # Handle name if not set
+    if state["name"] is None:
+        name = extract_name(message)
+        if name:
+            state["name"] = name
+            return f"Nice to meet you, {name}! How can I help you today?"
+        else:
+            return "Hello! May I know your name?"
+
+    user_name = state["name"]  # <-- use extracted name, not user_id
 
     # Symptom direct match
     for key, solution in symptom_solution_map.items():
@@ -115,6 +124,7 @@ def orchestrator_chat(user_name, message):
             return f"{solution} Take care, {user_name}."
 
     return f"I’m not sure, {user_name}. Please consult a doctor."
+
 
 # ===============================
 # 📌 Chat Endpoint
