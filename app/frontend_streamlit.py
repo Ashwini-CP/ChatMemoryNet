@@ -8,13 +8,10 @@ st.set_page_config(page_title='ChatMemoryNet', page_icon='🧠', layout='wide')
 st.markdown(
     """
     <style>
-    /* 🌈 Gradient background */
     body {
         background: linear-gradient(135deg, #89f7fe, #66a6ff);
         font-family: 'Segoe UI', sans-serif;
     }
-
-    /* Chat container styling */
     .chat-container {
         max-height: 500px;
         overflow-y: auto;
@@ -24,8 +21,6 @@ st.markdown(
         box-shadow: 0 4px 20px rgba(0,0,0,0.1);
         animation: fadeIn 1s ease-in-out;
     }
-
-    /* Chat bubble styles */
     .chat-bubble {
         padding: 12px 18px;
         border-radius: 20px;
@@ -50,8 +45,6 @@ st.markdown(
         text-align: left;
         box-shadow: 0 2px 6px rgba(0,0,0,0.15);
     }
-
-    /* Animations */
     @keyframes fadeIn {
         from { opacity: 0; }
         to { opacity: 1; }
@@ -115,6 +108,7 @@ for role, text in st.session_state.chat[-20:]:
     bubble_class = "user-bubble" if role == "user" else "bot-bubble"
     st.markdown(f"<div class='chat-bubble {bubble_class}'>{text}</div>", unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
+
 # ================================
 # 📊 Memory Graph Section
 # ================================
@@ -126,7 +120,7 @@ with col_json:
     st.markdown("### 📝 JSON View")
     if st.button('🔄 Refresh JSON'):
         try:
-            rg = requests.get(f'{backend_url}/graph')
+            rg = requests.get(f'{backend_url}/graph/{user_id}')
             if rg.ok:
                 st.json(rg.json())
             else:
@@ -137,7 +131,7 @@ with col_json:
 with col_viz:
     st.markdown("### 🌐 Interactive Graph")
     try:
-        gv = requests.get(f'{backend_url}/graphviz')
+        gv = requests.get(f'{backend_url}/graphviz/{user_id}')
         if gv.ok:
             st.components.v1.html(gv.text, height=550, scrolling=True)
         else:

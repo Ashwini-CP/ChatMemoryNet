@@ -4,7 +4,7 @@ from langchain_community.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
 from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
 import pandas as pd
-import os
+import os, json
 import networkx as nx
 from pyvis.network import Network
 
@@ -24,7 +24,7 @@ llm = HuggingFacePipeline(pipeline=local_pipeline)
 # -----------------------------
 # Load dataset
 # -----------------------------
-DATA_PATH = "data/healthcare_tanglish_dataset (2).csv"
+DATA_PATH = "data/healthcare_tanglish_dataset.csv"
 
 if os.path.exists(DATA_PATH):
     df = pd.read_csv(DATA_PATH)
@@ -44,10 +44,10 @@ if os.path.exists(DATA_PATH):
             knowledge_entries.extend([symptom, symptom_text])
 
         health_knowledge = list(set(knowledge_entries))
-        print(f"✅ Loaded dataset with {len(df)} records")
     else:
         raise ValueError("❌ CSV must contain 'symptoms', 'symptom_text', and 'solution' columns")
 else:
+    print("⚠️ Dataset not found, using fallback dictionary...")
     symptom_solution_map = {
         "fever": "Take rest, drink warm fluids, and monitor your temperature.",
         "headache": "Drink water, rest in a quiet room, and avoid stress.",
@@ -56,7 +56,6 @@ else:
         "stomach pain": "Take rest, drink warm water, and avoid spicy food."
     }
     health_knowledge = list(symptom_solution_map.keys())
-    print("⚠️ Dataset not found, using fallback dictionary...")
 
 # -----------------------------
 # Build FAISS
@@ -72,120 +71,145 @@ else:
     vectorstore.save_local("faiss_index")
 
 # -----------------------------
-# Memory
+# Per-user memory & graph storage
 # -----------------------------
-memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-user_name = None   # store the user’s name globally
+user_memories = {}
+user_graphs = {}
 
 # -----------------------------
 # Greeting handler
 # -----------------------------
-def handle_greetings(user_message: str):
+def handle_greetings(user_message: str, user_name: str = None):
     greetings = {
-        "hi": "Hello! May I know your name?",
-        "hello": "Hi there! What’s your name?",
-        "bye": "Goodbye! Take care of your health.",
+        "hi": f"Hello! May I know your name?" if not user_name else f"Hello {user_name}, how are you feeling today?",
+        "hello": f"Hi there! May I know your name?" if not user_name else f"Hi {user_name}, how can I help?",
+        "bye": f"Goodbye {user_name if user_name else ''}! Take care of your health.",
         "thank you": "You're welcome! Stay healthy."
     }
     return greetings.get(user_message.lower().strip(), None)
+
+# -----------------------------
+# Main chat orchestrator
+# -----------------------------
+def orchestrator_chat(user_message, memory, user_id):
+    # Check if we already know the username
+    graph = user_graphs[user_id]
+    user_name = graph.get("user_name")
+
+    # Detect if user provides their name
+    if user_message.lower().startswith("my name is"):
+        user_name = user_message[10:].strip().capitalize()
+        graph["user_name"] = user_name
+        return f"Nice to meet you, {user_name}! How are you feeling today?"
+
+    # Greetings
+    greeting_reply = handle_greetings(user_message, user_name)
+    if greeting_reply:
+        return greeting_reply
+
+    # Symptom direct match
+    for key, solution in symptom_solution_map.items():
+        if key in user_message.lower():
+            if user_name:
+                return f"{solution} Take care, {user_name}."
+            return solution
+
+    # FAISS search
+    docs = vectorstore.similarity_search(user_message, k=1)
+    if docs:
+        retrieved_key = docs[0].page_content.lower().strip()
+        solution = symptom_solution_map.get(retrieved_key, None)
+        if solution:
+            if user_name:
+                return f"{solution} Take care, {user_name}."
+            return solution
+
+    # Fallback
+    if user_name:
+        return f"I’m not sure, {user_name}. Please consult a doctor."
+    return "I don’t know. Please consult a doctor."
 
 # -----------------------------
 # Chat endpoint
 # -----------------------------
 @app.route("/chat", methods=["POST"])
 def chat():
-    global user_name
+    data = request.get_json()
+    user_id = data.get("user_id", "default")
+    user_message = data.get("message", "").strip()
 
-    user_message = request.json.get("message", "").strip()
-    if not user_message:
-        return jsonify({"error": "No message provided"}), 400
+    # ✅ Initialize user-specific memory
+    if user_id not in user_memories:
+        user_memories[user_id] = ConversationBufferMemory(
+            memory_key="chat_history", return_messages=True
+        )
+    memory = user_memories[user_id]
 
-    # Save user message to memory
-    memory.chat_memory.add_user_message(user_message)
-
-    # ----------------------
-    # If user_name not set → ask for name
-    # ----------------------
-    if not user_name:
-        if user_message.lower().startswith(("hi", "hello")):
-            reply = "Hello! May I know your name?"
-        elif user_message.lower().startswith("my name is"):
-            user_name = user_message.replace("my name is", "").strip().title()
-            reply = f"Nice to meet you, {user_name}! Tell me what’s troubling you today?"
+    # ✅ Initialize user-specific graph
+    graph_path = f"storage/graph_{user_id}.json"
+    if user_id not in user_graphs:
+        if os.path.exists(graph_path):
+            with open(graph_path, "r", encoding="utf-8") as f:
+                user_graphs[user_id] = json.load(f)
         else:
-            reply = "I don’t know your name yet. Could you please tell me your name? (e.g., My name is Arun)"
-        
-        memory.chat_memory.add_ai_message(reply)
-        return jsonify({"reply": reply})
+            user_graphs[user_id] = {"nodes": [], "edges": [], "user_name": None}
 
-    # ----------------------
-    # Greetings
-    # ----------------------
-    greeting_reply = handle_greetings(user_message)
-    if greeting_reply:
-        memory.chat_memory.add_ai_message(greeting_reply)
-        return jsonify({"reply": greeting_reply})
+    graph = user_graphs[user_id]
 
-    try:
-        # 1️⃣ Direct match
-        for key, solution in symptom_solution_map.items():
-            if key in user_message.lower():
-                personalized = f"{solution} Take care, {user_name}."
-                memory.chat_memory.add_ai_message(personalized)
-                return jsonify({"reply": personalized})
+    # Generate reply
+    reply = orchestrator_chat(user_message, memory, user_id)
 
-        # 2️⃣ FAISS similarity search
-        docs = vectorstore.similarity_search(user_message, k=1)
-        if docs:
-            retrieved_key = docs[0].page_content.lower().strip()
-            solution = symptom_solution_map.get(retrieved_key, None)
-            if solution:
-                personalized = f"{solution} Take care, {user_name}."
-                memory.chat_memory.add_ai_message(personalized)
-                return jsonify({"reply": personalized})
+    # Save memory
+    memory.chat_memory.add_user_message(user_message)
+    memory.chat_memory.add_ai_message(reply)
 
-        # 3️⃣ Fallback
-        reply = f"I’m not sure, {user_name}. Please consult a doctor."
-        memory.chat_memory.add_ai_message(reply)
-        return jsonify({"reply": reply})
+    # Save graph nodes
+    graph["nodes"].append({"role": "user", "content": user_message})
+    graph["nodes"].append({"role": "bot", "content": reply})
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    with open(graph_path, "w", encoding="utf-8") as f:
+        json.dump(graph, f, indent=2)
+
+    return jsonify({"reply": reply})
 
 # -----------------------------
-# Graph JSON
+# Graph JSON endpoint
 # -----------------------------
-@app.route("/graph", methods=["GET"])
-def get_graph_json():
-    history = []
-    for msg in memory.chat_memory.messages:
-        history.append({"role": msg.type, "content": msg.content})
-    return jsonify({"chat_history": history})
+@app.route("/graph/<user_id>", methods=["GET"])
+def get_graph_json(user_id):
+    graph_path = f"storage/graph_{user_id}.json"
+    if os.path.exists(graph_path):
+        with open(graph_path, "r", encoding="utf-8") as f:
+            return jsonify(json.load(f))
+    else:
+        return jsonify({"nodes": [], "edges": [], "user_name": None})
 
 # -----------------------------
-# Graph Visualization
+# Graph visualization
 # -----------------------------
-@app.route("/graphviz", methods=["GET"])
-def get_graph_viz():
+@app.route("/graphviz/<user_id>", methods=["GET"])
+def get_graph_viz(user_id):
+    graph_path = f"storage/graph_{user_id}.json"
+    if not os.path.exists(graph_path):
+        return "No graph available for this user."
+
+    with open(graph_path, "r", encoding="utf-8") as f:
+        graph_data = json.load(f)
+
     G = nx.DiGraph()
-
-    # Create nodes for each message
-    for i, msg in enumerate(memory.chat_memory.messages):
-        node_id = f"{msg.type}_{i}"
-        G.add_node(node_id, label=f"{msg.type}: {msg.content[:40]}")
-
+    for i, node in enumerate(graph_data["nodes"]):
+        node_id = f"{node['role']}_{i}"
+        G.add_node(node_id, label=f"{node['role']}: {node['content'][:40]}")
         if i > 0:
-            prev_id = f"{memory.chat_memory.messages[i-1].type}_{i-1}"
+            prev_id = f"{graph_data['nodes'][i-1]['role']}_{i-1}"
             G.add_edge(prev_id, node_id)
 
-    # Build interactive graph
     net = Network(height="500px", width="100%", directed=True)
     net.from_nx(G)
-    net.save_graph("chat_graph.html")
+    net.save_graph(f"storage/chat_graph_{user_id}.html")
 
-    with open("chat_graph.html", "r", encoding="utf-8") as f:
+    with open(f"storage/chat_graph_{user_id}.html", "r", encoding="utf-8") as f:
         html = f.read()
-
     return html
 
 # -----------------------------
