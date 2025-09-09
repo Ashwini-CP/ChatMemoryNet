@@ -116,18 +116,6 @@ st.subheader("📊 Memory Graph")
 
 col_json, col_viz = st.columns([1, 2])
 
-with col_json:
-    st.markdown("### 📝 JSON View")
-    if st.button('🔄 Refresh JSON'):
-        try:
-            rg = requests.get(f'{backend_url}/graph/{user_id}')
-            if rg.ok:
-                st.json(rg.json())
-            else:
-                st.error('❌ Failed to fetch graph JSON')
-        except Exception as e:
-            st.error(f'⚠ Connection error: {e}')
-
 with col_viz:
     st.markdown("### 🌐 Interactive Graph")
     try:
