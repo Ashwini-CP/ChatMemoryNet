@@ -7,7 +7,7 @@ from langchain_community.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
 from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
 import pandas as pd
-import os, json, re
+import os, re
 import networkx as nx
 from pyvis.network import Network
 
@@ -129,9 +129,6 @@ def orchestrator_chat(user_id, message):
 # ===============================
 # 📌 Chat Endpoint
 # ===============================
-# ===============================
-# 📌 Chat Endpoint
-# ===============================
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json
@@ -153,8 +150,9 @@ def chat():
     G = user_graphs[user_id]
 
     # If first time, create root node with username (or user_id)
-    if state["name"] and not G.has_node(state["name"]):
-        G.add_node(state["name"], type="user_root")
+    root_node = state["name"] if state["name"] else user_id
+    if not G.has_node(root_node):
+        G.add_node(root_node, type="user_root")
 
     # Conversation nodes
     user_node = f"user: {message}"
@@ -163,36 +161,14 @@ def chat():
     G.add_node(user_node, type="user_message")
     G.add_node(bot_node, type="bot_reply")
 
-    # Attach conversation to root (username)
-    if state["name"]:
-        G.add_edge(state["name"], user_node)
-    else:
-        G.add_edge(user_id, user_node)
-
+    # Attach conversation to root
+    G.add_edge(root_node, user_node)
     G.add_edge(user_node, bot_node)
 
     return jsonify({"reply": reply})
 
 # ===============================
-# 📊 Get Graph as HTML
-# ===============================
-# ===============================
 # 📊 Get Graph as HTML (per user)
-# ===============================
-@app.route("/graphviz/<user_id>", methods=["GET"])
-def get_graph_viz_user(user_id):
-    if user_id not in user_graphs:
-        return "No graph available for this user."
-
-    G = user_graphs[user_id]
-    net = Network(height="500px", width="100%", directed=True)
-    net.from_nx(G)
-    return net.generate_html()
-
-
-
-# ===============================
-# 📊 Get Graph as HTML
 # ===============================
 @app.route("/graphviz/<user_id>", methods=["GET"])
 def get_graph_viz(user_id):
