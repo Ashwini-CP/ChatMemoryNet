@@ -5,6 +5,7 @@ from langchain.memory import ConversationBufferMemory
 from langchain_huggingface import HuggingFacePipeline, HuggingFaceEmbeddings
 import pandas as pd
 import os
+import re
 import networkx as nx
 from pyvis.network import Network
 
@@ -47,6 +48,7 @@ if os.path.exists(DATA_PATH):
     else:
         raise ValueError("❌ CSV must contain 'symptoms', 'symptom_text', and 'solution' columns")
 else:
+    print("⚠️ Dataset not found, using fallback dictionary...")
     symptom_solution_map = {
         "fever": "Take rest, drink warm fluids, and monitor your temperature.",
         "headache": "Drink water, rest in a quiet room, and avoid stress.",
@@ -55,9 +57,6 @@ else:
         "stomach pain": "Take rest, drink warm water, and avoid spicy food."
     }
     health_knowledge = list(symptom_solution_map.keys())
-
-print("✅ Loaded dataset with", len(symptom_solution_map), "entries")
-print("🔎 Sample mapping:", list(symptom_solution_map.items())[:5])
 
 # -----------------------------
 # Build FAISS
@@ -78,6 +77,19 @@ else:
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 # -----------------------------
+# Preprocess Tanglish text
+# -----------------------------
+def preprocess_text(text: str) -> str:
+    text = text.lower().strip()
+    # Remove filler words (extend this list as needed)
+    fillers = ["ah", "la", "da", "vanthuruchu", "irukku", "aagudhu", "kuduthu", "pannunga"]
+    for f in fillers:
+        text = text.replace(f, "")
+    # Remove multiple spaces
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+# -----------------------------
 # Greeting handler
 # -----------------------------
 def handle_greetings(user_message: str):
@@ -94,26 +106,24 @@ def handle_greetings(user_message: str):
 # -----------------------------
 @app.route("/chat", methods=["POST"])
 def chat():
-    user_message = request.json.get("message", "").lower().strip()
+    user_message = request.json.get("message", "").strip()
     if not user_message:
         return jsonify({"error": "No message provided"}), 400
 
+    cleaned_message = preprocess_text(user_message)
+
+    # Save user message to memory
     memory.chat_memory.add_user_message(user_message)
 
-    greeting_reply = handle_greetings(user_message)
+    # Greetings first
+    greeting_reply = handle_greetings(cleaned_message)
     if greeting_reply:
         memory.chat_memory.add_ai_message(greeting_reply)
         return jsonify({"reply": greeting_reply})
 
     try:
-        # 1️⃣ Direct match
-        for key, solution in symptom_solution_map.items():
-            if key in user_message:
-                memory.chat_memory.add_ai_message(solution)
-                return jsonify({"reply": solution})
-
-        # 2️⃣ FAISS similarity search
-        docs = vectorstore.similarity_search(user_message, k=1)
+        # 1️⃣ Try FAISS similarity search first
+        docs = vectorstore.similarity_search(cleaned_message, k=1)
         if docs:
             retrieved_key = docs[0].page_content.lower().strip()
             solution = symptom_solution_map.get(retrieved_key, None)
@@ -121,24 +131,19 @@ def chat():
                 memory.chat_memory.add_ai_message(solution)
                 return jsonify({"reply": solution})
 
-        # 3️⃣ Fallback
+        # 2️⃣ Fallback: substring check in dictionary
+        for key, solution in symptom_solution_map.items():
+            if key in cleaned_message:
+                memory.chat_memory.add_ai_message(solution)
+                return jsonify({"reply": solution})
+
+        # 3️⃣ Fallback: default response
         reply = "I don’t know. Please consult a doctor."
         memory.chat_memory.add_ai_message(reply)
         return jsonify({"reply": reply})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-# -----------------------------
-# Rebuild FAISS endpoint
-# -----------------------------
-@app.route("/rebuild", methods=["POST"])
-def rebuild_index():
-    global vectorstore
-    print("♻️ Rebuilding FAISS index from dataset...")
-    vectorstore = FAISS.from_texts(health_knowledge, embeddings)
-    vectorstore.save_local("faiss_index")
-    return jsonify({"status": "ok", "count": len(health_knowledge)})
 
 # -----------------------------
 # Graph JSON
@@ -157,6 +162,7 @@ def get_graph_json():
 def get_graph_viz():
     G = nx.DiGraph()
 
+    # Create nodes for each message
     for i, msg in enumerate(memory.chat_memory.messages):
         node_id = f"{msg.type}_{i}"
         G.add_node(node_id, label=f"{msg.type}: {msg.content[:40]}")
@@ -165,6 +171,7 @@ def get_graph_viz():
             prev_id = f"{memory.chat_memory.messages[i-1].type}_{i-1}"
             G.add_edge(prev_id, node_id)
 
+    # Build interactive graph
     net = Network(height="500px", width="100%", directed=True)
     net.from_nx(G)
     net.save_graph("chat_graph.html")
