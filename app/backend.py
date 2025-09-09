@@ -184,5 +184,5 @@ def get_graph_viz():
 # -----------------------------
 # Run Flask
 # -----------------------------
-if _name_ == "_main_":
+if __name__ == "__main__":
     app.run(host="127.0.0.1", port=8000)
