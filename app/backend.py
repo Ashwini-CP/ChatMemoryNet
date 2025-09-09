@@ -176,8 +176,11 @@ def chat():
 # ===============================
 # 📊 Get Graph as HTML
 # ===============================
+# ===============================
+# 📊 Get Graph as HTML (per user)
+# ===============================
 @app.route("/graphviz/<user_id>", methods=["GET"])
-def get_graph_viz(user_id):
+def get_graph_viz_user(user_id):
     if user_id not in user_graphs:
         return "No graph available for this user."
 
@@ -185,6 +188,7 @@ def get_graph_viz(user_id):
     net = Network(height="500px", width="100%", directed=True)
     net.from_nx(G)
     return net.generate_html()
+
 
 
 # ===============================
